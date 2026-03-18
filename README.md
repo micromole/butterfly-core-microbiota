@@ -3,7 +3,7 @@ Butterfly Core Microbiota 16S Metabarcoding Pipeline
 by Arne Weinhold (LMU Munich) arne.weinhold@bio.lmu.de
 
 ## What it is
-This is the full processing pipeline for microbiome analysis from 16S Illumina data. It contains all code required to reproduce the analyses, figures and statistics presented in:
+This repository provides the full processing pipeline for microbiome analysis based on 16S Illumina sequencing data. It contains all code required to reproduce the analyses, figures and statistics presented in:
 > Weinhold A*, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: Host-specific and common core microbiota in adult butterflies across continents, bioRxiv https://doi.org/10.64898/2026.02.27.708436
 
 ## How to
