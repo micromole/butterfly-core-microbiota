@@ -8,26 +8,25 @@ This is the full processing pipeline for microbiome analysis from 16S Illumina d
 
 ## How to
 * Download all files of this repository
-* Load ```R_16S_AW_Butterfly_pipeline_01.R``` into R
-* Install required libraries
-* Adapt path of your specific working directory ```setwd("../your_folder") ```
+* Load ```R_16S_AW_Butterfly_pipeline_v01.R``` into R
+* Install libraries and adapt path of working directory ```setwd("../butterfly-core-microbiota") ```
 * Run pipeline
 
 ## What it does
 * Loads additional functions ```R_16S_AW_functions.R```
-* Reimports sample data into ps object ```data.comp```
-* Creates output directory for *.pdf figures
+* Imports sample data into ps object ```data.comp```
+* Creates output directory for *.pdf files
 
-
-## What you get
-Main steps of the analysis pipeline:
-* data.comp       # Raw project sample data file
-* data.bacteria   # Cyano reads / plant reads / unresolved taxa removed
-* data.fixed      # Low quality samples removed (low PCR / high cyano reads)
-* data.prevfilter # Prevalence cutoff / low stringent filtering / rare taxa removed <0.01%
-* data.pruned     # positive control / spike-in taxa removed (mock community)
-* data.decontam   # decontam applied on cleared controls
-* data.high       # LT2000 Low throughput samples removed
-* sample.ASV      # controls removed / only samples on ASV level
-* sample.species  # controls removed / only samples on genus / final dataset for analysis
-* sample.filter   # optional: filter low abundant genera to simplify phylo tree
+## Output files
+```
+00_data		      pre-processing and filtering
+01_sample       taxa composition and core analysis
+02_sample_div	  alpha and beta diversity analysis
+03_sample_taxa	ASV abundance
+05_ggtree	      core tree analysis
+06_alluvial	    network alluvial plot
+07           		final figures
+```
+## Alternative input
+* Process Illumina data according to https://github.com/chiras/metabarcoding_pipeline/
+* Merge Taxonomy, Community table and Metadata into ```data.comp```
