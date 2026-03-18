@@ -18,7 +18,6 @@ This is the full processing pipeline for microbiome analysis from 16S Illumina d
 * Creates output directory for *.pdf files
 
 ## Output files
-```
 | 00_data         | pre-processing and filtering             |
 | 01_sample       | taxa composition and core analysis       |
 | 02_sample_div   | alpha and beta diversity analysis        |
@@ -26,7 +25,7 @@ This is the full processing pipeline for microbiome analysis from 16S Illumina d
 | 05_ggtree       | core tree analysis                       |
 | 06_alluvial     | network alluvial plot                    |
 | 07              | final figures                            |
-```
+
 ## Alternative input
 * Process Illumina data according to https://github.com/chiras/metabarcoding_pipeline/
 * Merge Taxonomy, Community table and Metadata into ```data.comp```
