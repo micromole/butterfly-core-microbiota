@@ -18,6 +18,7 @@ This is the full processing pipeline for microbiome analysis from 16S Illumina d
 * Creates output directory for *.pdf files
 
 ## Output files
+|-----------------|------------------------------------------|
 | 00_data         | pre-processing and filtering             |
 | 01_sample       | taxa composition and core analysis       |
 | 02_sample_div   | alpha and beta diversity analysis        |
