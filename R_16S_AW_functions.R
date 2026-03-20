@@ -28,7 +28,6 @@ theme_heat <- function(base_size = 11) {
       legend.key = element_blank()
     ) }
 
-
 theme_grid <- function(base_size = 11) {
   theme_linedraw()%+replace%
     theme(
@@ -42,7 +41,7 @@ theme_grid <- function(base_size = 11) {
     ) }
 
 
-##function "replace_tax_prefixes"
+## function "replace_tax_prefixes" by Alexander Keller
 replace_tax_prefixes <- function(phyloseq){
   tmp_tax_table <- apply(tax_table(phyloseq), c(1, 2),function(y) gsub("^\\w:","",y))
   tmp_tax_table <- apply(tmp_tax_table, c(1, 2),function(y) gsub("_spc_.*","_spc",y))
@@ -52,7 +51,7 @@ replace_tax_prefixes <- function(phyloseq){
   return(phyloseq)
 }
 
-##function "propagate_incomplete_taxonomy"
+## function "propagate_incomplete_taxonomy" by Alexander Keller
 propagate_incomplete_taxonomy <- function(phyloseq){
   taxranks <- colnames(tax_table(phyloseq))
   for (i in 2:length(taxranks)){
@@ -61,7 +60,7 @@ propagate_incomplete_taxonomy <- function(phyloseq){
   return(phyloseq)
 }
 
-##function "calc_prevalence"
+## function "calc_prevalence" for prevalence abundance plots
 calc_prevalence<- function(ps, rank = "Phylum") {
   
   # Calculate prevalence per taxon
@@ -94,11 +93,11 @@ calc_prevalence<- function(ps, rank = "Phylum") {
   ))
 }
 
-## Label samples with low throughput with LT (function)
-label_low_throughput <- function(phyloseq, threshold){
-  sample_names(phyloseq)[sample_sums(phyloseq)<threshold]<-paste(sample_names(phyloseq)[sample_sums(phyloseq)<threshold],"|LT",threshold,sep="")
-  return(phyloseq)
-}
+## Label samples with low throughput with LT (function) by Alexander Keller
+#label_low_throughput <- function(phyloseq, threshold){
+#  sample_names(phyloseq)[sample_sums(phyloseq)<threshold]<-paste(sample_names(phyloseq)[sample_sums(phyloseq)<threshold],"|LT",threshold,sep="")
+#  return(phyloseq)
+#}
 
 
 ### Test for variables that correlate best with community matrix
@@ -109,6 +108,26 @@ veganotu = function(physeq) {
     OTU = t(OTU)
   }
   return(as(OTU, "matrix"))
+}
+
+# function "plate_frame" to show read abundance per extraction plate as heatmap
+plate_frame <- function(ps) {
+  title <- deparse(substitute(ps))  # get object name
+  df <- cbind(
+    as.data.frame(sample_data(ps)),
+    reads = sample_sums(ps)
+  )
+  df %>%
+    separate(well, into = c("Row", "Column"), sep = "(?<=\\D)(?=\\d)", convert = TRUE) %>%
+    arrange(Row, Column) %>%
+    mutate(Row = factor(Row, levels = c("H","G","F","E","D","C","B","A"))) %>%
+    ggplot(aes(x = Column, y = Row, fill = reads, label = reads)) +
+    geom_tile() +
+    geom_text(size = 2) +
+    facet_wrap(~plate) +
+    scale_fill_viridis_c(direction = -1) +
+    labs(title = title, x = "Column", y = "Row") +
+    theme_minimal()
 }
 
 # Run kruskal.test output as table: run_kruskal(core.melt, "host_subfamily")
