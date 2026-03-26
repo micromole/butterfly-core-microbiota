@@ -93,11 +93,6 @@ calc_prevalence<- function(ps, rank = "Phylum") {
   ))
 }
 
-## Label samples with low throughput with LT (function) by Alexander Keller
-#label_low_throughput <- function(phyloseq, threshold){
-#  sample_names(phyloseq)[sample_sums(phyloseq)<threshold]<-paste(sample_names(phyloseq)[sample_sums(phyloseq)<threshold],"|LT",threshold,sep="")
-#  return(phyloseq)
-#}
 
 
 ### Test for variables that correlate best with community matrix
