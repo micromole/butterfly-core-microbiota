@@ -1,0 +1,165 @@
+\documentclass[a4paper,11pt]{scrartcl}
+\usepackage[T1]{fontenc}       % modern font encoding
+\usepackage[utf8]{inputenc}    % UTF-8 encoding
+\usepackage[english]{babel}    % change to german if needed
+\usepackage{lmodern}           % scalable, modern font
+\usepackage{graphicx}          % include figures
+\usepackage{caption}           % modern caption control
+\usepackage{microtype}         % better spacing
+\usepackage{float}
+\usepackage[
+  headsepline=0.5pt,
+  footsepline=0.5pt
+]{scrlayer-scrpage}
+
+% First run R_16S_AW_Butterfly_pipeline_v01.R to create figures, then run Supplementary_Information.tex 
+
+\usepackage[
+paper=a4paper,
+left=15mm,
+right=15mm,
+top=20mm,
+bottom=30mm
+]{geometry}
+
+\graphicspath{{plots_peru/}}
+\renewcommand{\familydefault}{\sfdefault}
+\renewcommand{\thefigure}{S\arabic{figure}} % S1, S2...
+\addto\captionsenglish{%
+	\renewcommand{\figurename}{Supplementary Figure}%
+}
+\captionsetup{%font={small},
+	 labelfont={bf}, format=plain }
+
+\ihead{Supplementary Information}
+\ifoot{Weinhold \textit{et al.}, 2026}
+\cfoot{}
+\ofoot{\pagemark}
+\setkomafont{pagehead}{\normalfont}
+\setkomafont{pagefoot}{\normalfont}
+
+\usepackage[pdfauthor={Weinhold et al. 2026},
+pdftitle={Supplementary Information},
+pdfsubject={Supplementary Information},
+pdfpagelayout=SinglePage
+]{hyperref}
+
+\begin{document}
+
+\begin{titlepage}
+	\centering
+	{\bfseries\LARGE Consensus of the adult butterfly core microbiota across continents\par}
+	\vspace{1.5cm}
+	{\large Weinhold A$^{1*}$, Pinos A$^{1\#}$, Correa-Carmona Y$^{2\#}$, Holzmann KL$^{3}$, Alonso-Alonso P$^{3}$, Yon F$^{4}$, Steffan-Dewenter I$^{3}$, Peters MK$^{3,5}$, Brehm G$^{2}$, Keller A$^{1}$ A$^{1}$, Author B$^{2}$, Author C$^{1,3}$\par}
+	\vspace{0.5cm}
+	{\small
+		$^{1}$Center for Organismic Adaptation, Cellular and Organismic Networks, Ludwig-Maximilians-Universität München, Munich, Germany\par
+		$^{2}$Institut für Zoologie und Evolutionsbiologie mit Phyletischem Museum, Friedrich-Schiller University Jena, Jena, Germany\par
+		$^{3}$Department of Animal Ecology and Tropical Biology, Biocenter, University of Würzburg, Würzburg, Germany\par
+        $^{4}$Departamento de Ciencias Biológicas y Fisiológicas, Facultad de Ciencias e Ingeniería, Universidad Peruana Cayetano Heredia, Lima, Peru\par
+        $^{5}$Animal Ecology, BIOM, University of Bremen, Germany\par
+	}
+    \vspace{0.5cm}
+    {\small
+		$^{*}$Corresponding author: arne.weinhold@bio.lmu.de\par
+        $^{\#}$authors contributed equally\par
+        }
+    \vspace{2cm}
+    Supplementary Figures S1--S9 \\
+    Supplementary Table S1
+    \vfill
+	{\Large \textbf{Supplementary Information}\par}
+	\vspace{1cm}
+	{\small \today\par} % optional date
+\end{titlepage}
+
+
+
+\section*{Supplementary Figures}
+
+% Figure S1
+% -----------------------------
+\noindent
+\begin{figure}[H]
+	\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS1_alpha.country.pdf} 
+	\caption{Adult butterfly diversity differs by host taxonomy, but not among countries
+		(\textbf{a}) Shannon Index differs significantly among host subfamilies (colors) and host tribes (grouped), (\textbf{b}) but not among countries. The full model explained 32\%{} of variation in Shannon diversity, with the main effect accounted to host tribe  ($R^2_{\mathrm{partial}} = 0.24,\; F_{11,154} = 4.5,\; p < 10^{-5}$), there was no effect of country ($R^2_{\mathrm{partial}} < 0.01,\; F_{1,154} = 0.01,\; p = 0.91$). (\textbf{c}) Shannon Index does not differ by country when testing different subfamilies individually: Coliadinae ($p = 0.33$), Dismorphiinae ($p = 0.18$) and Pierinae ($p = 0.91$).}
+\end{figure} 
+\clearpage
+% Figure S2
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS2_alphaelevation.pdf} 
+\caption{Influence of environmental gradients on adult butterfly microbiota diversity
+(\textbf{a}) Alpha diversity (only Peru samples) shows linear decrease with elevation (meters above sea level). (\textbf{b}) Alpha diversity (only Germany samples) shows linear increase by calendar week, when removing \textit{Aglais} as outgroup. (\textbf{c}) Shannon Index shows an increase with mean sample week temperature on the complete dataset. (\textbf{d}) Microbial richness increases with mean sample week temperature on the complete dataset. The full model with temperature and host subfamily explained 57\%{} of the observed variation ($F_{13,153} = 17.66, p < 10^{-15}$). Most of the variation was explained by host subfamily turnover ($R^2_{\mathrm{partial}} = 0.33, F_{6,153} = 12.65, p < 10^{-10}$), while temperature had a smaller but significant effect ($R^2_{\mathrm{partial}} = 0.04, F_{1,153} = 6.46, p = 0.012$), the interaction between host subfamily and temperature was also significant ($R^2_{\mathrm{partial}} = 0.19, F_{6,153} = 5.98, p < 0.0001$).}
+\end{figure} 
+\clearpage
+% Figure S3
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS3_beta_genus.pdf}
+\caption{ Host taxonomic identity is a better predictor of microbial diversity than environmental factors (\textbf{a}) Microbiota of adult butterfly genera differs in beta dispersion (colored by host tribe). (\textbf{b}) Beta diversity of the adult butterfly microbiota using PCoA based on Bray-Curtis distances. Samples are colored by host tribe and panels faceted by host genus (unique genera with less than two replicates were excluded). (\textbf{c}) Host tribe is a better predictor of microbial diversity than environmental factors (partial $R^2$ values shown for each factor).}
+\end{figure} 
+\clearpage
+% Figure S4
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS4_corevenn_alternative.pdf}
+\caption{Selection of genus core microbiota
+(\textbf{a}) Heatmap highlighting the most abundant and prevalent genera among all samples. (\textbf{b}) Venn diagram shows overlap of core genera when applying different core definitions. High abundance definition (5\% rel. abundance 10\% prevalence) results in 11 core genera (missing \textit{Acinetobacter}); Medium abundance definition (1\% rel. abundance 20\% prevalence) results in 12 core genera (as used in this study). Low abundance definition (0.2\% rel. abundance 40\% prevalence) results in 12 core genera replacing \textit{Entomomonas} and \textit{Apibacter} with \textit{Carnobacterium} and \textit{Raoultella}. (\textbf{c}) Average relative abundance of the 12 genus core taxa among individual butterfly genera. (\textbf{d}) Remaining non-core microbiota among individual butterfly genera. Even non-core genera belonged to the same bacterial groups e.g. LAB (\textit{Carnobacterium}, \textit{Leuconostoc}), AAB (\textit{Swaminathania}, \textit{Saccharibacter}), enteric bacteria (\textit{Cedecea}, \textit{Serratia}, \textit{Roultella}), or Orbacea (\textit{Frischella}). \textit{Aglais} served as an outgroup within the dataset.}
+\end{figure} 
+\clearpage
+% Figure S5
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS5_core_square.pdf}
+\caption{Detailed taxonomic placement of the adult butterfly genus core microbiota.
+Phylogenetic grouping (SINA RAxML tree) and relative abundance of the 80 most abundant bacterial genera. Expansion of Figure 4 including all genus names.}
+\end{figure} 
+\clearpage
+% Figure S6
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS6_country_core.pdf}
+\caption{Country-specific distribution of genus core taxa.
+Relative abundance of individual core genera among countries and results of Kruskal-Wallis-Tests following Benjamini–Hochberg correction accounting for multiple comparisons (Germany n = 76, Peru n = 91).}
+\end{figure} 
+\clearpage
+% Figure S7
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS7_bubble.country.pdf} 
+\caption{Distribution of genus core ASVs across countries. Relative abundance and distribution of individual ASVs of the 12 genus core taxa. Only ASVs with $\ge 2\%$ relative abundance in at least one sample were shown.}
+\end{figure} 
+\clearpage
+% Figure S8
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS8_endo.pdf}
+\caption{Endosymbionts in the adult butterfly microbiota. (\textbf{a}) Average relative abundance of endosymbionts grouped per butterfly genus. (\textbf{b}) Relative abundance of endosymbionts among individual samples grouped by genus and country. Only relative abundances $\ge 1\%$ are shown.}
+\end{figure} 
+\clearpage
+
+% Figure S9
+% -----------------------------
+\noindent
+\begin{figure}[H]
+\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS9_corestrip.pdf}
+\caption{Distribution of genus core taxa among butterfly samples.
+(\textbf{a}) Total genus core abundance among individual butterfly genera. (\textbf{b}) Distribution of individual genus core taxa across butterfly subfamilies. Symbols depict different sampling countries (Circles for Germany, triangles for Peru).}
+\end{figure} 
+\clearpage
+
+\noindent
+\textbf{Supplementary Table S1} (File: \texttt{Suppl\_table\_sample\_filter\_metadata.csv}) \\[2mm]
+Sample metadata and removed reads per individual sample (total and percentage) including individual BioProject accession numbers.
+\clearpage
+
+\end{document}

@@ -141,8 +141,6 @@ rm(otu_tab)
 ## 00 data.bacteria ------------------------
 # Removal of non-bacterial reads: Cyanobacteria / plant organelles / unresolved taxa
 
-sample.comp <- subset_samples(data.comp, type=="sample")
-
 # Histogram of sample read counts, Make a data frame for the read counts of each sample
 data.comp.df <- data.frame(sample_data(data.comp))
 data.comp.df$LibrarySize <- sample_sums(data.comp)
@@ -165,9 +163,9 @@ sampling.depth <- ggplot(data.comp.df, aes(x = chip, y = LibrarySize)) +
   labs(title = "sequencing depth", y = "sample size (reads)")
 
 # First view barplot
-# filter data.comp first as there can be trouble with minor taxa names
-data.comp.p <- tax_filter(data.comp, min_prevalence = 2, min_total_abundance = 50, min_sample_abundance = 10)
-first.view.comp <- data.comp.p %>%
+first.view.comp <- data.comp %>%
+  prune_taxa(taxa_sums(.) > 10, .) %>% # filter (as there can be trouble with minor taxa names)
+  #tax_glom(taxrank = "phylum") %>% # simplify to phylum 
   #ps_filter(type == "sample") %>%
   comp_barplot(tax_level = "phylum", n_taxa = 15, sample_order = "asis",
                label = NULL ) +
@@ -185,9 +183,9 @@ first.view.comp <- data.comp.p %>%
 (data.bacteria = subset_taxa(data.bacteria, kingdom!="")) # 7380
 #(data.bacteria <- subset_taxa(data.bacteria, order != "p:Proteobacteria_spc" &  order != "p:Firmicutes_spc" &  order != "p:Actinobacteria_spc"))  
 
-
-data.bacteria.p <- tax_filter(data.bacteria, min_prevalence = 2, min_total_abundance = 50, min_sample_abundance = 10) # simplyfy data for figure
-second.view.comp <- data.bacteria.p %>%
+second.view.comp <- data.bacteria %>%
+  prune_taxa(taxa_sums(.) > 10, .) %>% # filter (as there can be trouble with minor taxa names)
+  #tax_glom(taxrank = "phylum") %>% # simplify to phylum 
   #ps_filter(type == "sample") %>%
   comp_barplot(tax_level = "phylum", n_taxa = 15, sample_order = "asis",
                label = NULL ) +
@@ -197,19 +195,13 @@ second.view.comp <- data.bacteria.p %>%
 
 # Check what has been removed
 cyano.removed  <- prune_taxa(setdiff(names(taxa_sums(data.comp)), names(taxa_sums(data.bacteria))), data.comp)
-cyano.removed.sample <- subset_samples(cyano.removed, type=="sample")
 
+# Percentage of reads removed overall and per sample
+percentage_removed_cyano_total <- 100 * sum(sample_sums(cyano.removed)) / sum(sample_sums(data.comp))
+percentage_removed_cyano_sample <- 100 * sum(sample_sums(subset_samples(cyano.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.comp, type == "sample")))
 
-# Calculate percentage of cyano reads removed
-percentage_removed_cyano_sample <- (sum(sample_sums(cyano.removed.sample)) / 
-                                      sum(sample_sums(sample.comp ))) * 100
-
-percentage_removed_cyano_total <- (sum(sample_sums(cyano.removed)) / 
-                                     sum(sample_sums(data.comp))) * 100
-
-percentage_removed_cyano_sample # 0.374%
 percentage_removed_cyano_total  # 0.388%
-
+percentage_removed_cyano_sample # 0.374%
 
 # Show top removed taxa with genus names e.g. to identify d:Bacteria_spc_spc_spc_spc with Blast search
 cyano.taxa.abundance <- data.frame(sort(taxa_sums(cyano.removed), decreasing = TRUE)[1:50])
@@ -225,9 +217,10 @@ cyano.removed.frame <- data.frame(
   cyano = sample_sums(cyano.removed),
   samplesum = sample_sums(data.comp),
   host_genus = sample_data(cyano.removed)$host_genus,
+  host_subfamily = sample_data(cyano.removed)$host_subfamily,
   type = sample_data(cyano.removed)$type,
   PCR = sample_data(cyano.removed)$PCR,
-  percent_removed = (sample_sums(cyano.removed) / sample_sums(data.comp)) * 100)
+  cyano_percent = (sample_sums(cyano.removed) / sample_sums(data.comp)) * 100)
 # Sort the dataframe in decreasing order
 cyano.removed.frame.sorted <- cyano.removed.frame[order(cyano.removed.frame$cyano), ]
 
@@ -237,17 +230,16 @@ tail(cyano.removed.frame.sorted, 100)
 
 # Mean percentage of cyano removed by genus
 mean_cyanoremoved_by_genus <- cyano.removed.frame.sorted %>%
-  mutate(percent_removed = as.numeric(percent_removed)) %>%
+  mutate(cyano_percent = as.numeric(cyano_percent)) %>%
   group_by(host_genus) %>%
-  summarise(cyano_percent = round(mean(percent_removed, na.rm = TRUE), 2)) %>% 
+  summarise(cyano_percent = round(mean(cyano_percent, na.rm = TRUE), 2)) %>% 
   arrange(desc(cyano_percent))
 
 # List percentage removed per genus
 as.data.frame(mean_cyanoremoved_by_genus)
 
 # Show removed taxa
-# simplify to higher tax rank to speed up figures (and safe space)
-cyano.removed.p <- tax_glom(cyano.removed,taxrank="phylum")
+cyano.removed.p <- tax_glom(cyano.removed,taxrank="phylum") # simplify to higher tax rank to speed up figures (and safe space) 
 cyano.removed.melt <- psmelt(cyano.removed.p)
 
 cyano.removed.lowrank <- ggplot(cyano.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(#position="fill",
@@ -265,11 +257,11 @@ data.bacteria.df$cyanoremoved <- sample_sums(cyano.removed)
 data.bacteria.df$percentcyano <-  ((data.bacteria.df$cyanoremoved) / (data.bacteria.df$sumsbefore)) * 100
 data.bacteria.df$Shannon <- estimate_richness(data.bacteria, measures = "Shannon")$Shannon
 
-cyano.percentremoved <- ggplot(data.bacteria.df  , aes(x=percentcyano , y=samplesums, color=subtype, size = cyanoremoved)) +
-    geom_point(alpha=0.7) + ylim(0, 50000) + xlim(0, 50) + facet_wrap(~type) +
+cyano.percentremoved <- ggplot(data.bacteria.df  , aes(x=percentcyano , y=samplesums, color=host_subfamily, size = cyanoremoved)) +
+    geom_point(alpha=0.7) + ylim(0, 80000) + xlim(0, 100) + facet_wrap(~type) +
     labs(x = "percent cyano removed", y = "sample sums", title = "Cyano / plants removed") 
 
-cyano.percentremoved.total <- ggplot(data.bacteria.df  , aes(x=percentcyano, y=  cyanoremoved, color=subtype, size = samplesums)) + 
+cyano.percentremoved.total <- ggplot(data.bacteria.df  , aes(x=percentcyano, y=  cyanoremoved, color=host_subfamily, size = samplesums)) + 
   geom_point(alpha=0.7) + xlim(0, 50)  + facet_wrap(~type) + 
   geom_hline(yintercept = 500, color = "red", linetype = "dashed") + geom_vline(xintercept = 5, color = "blue", linetype = "dashed") +
   labs(x = "percent cyano removed", y = "cyano reads removed", title = "Cyano / plants removed") 
@@ -297,12 +289,14 @@ cyano.percent.boxplot
 data.bacteria.shannon
 dev.off()
 
+rm(first.view.comp)
+rm(second.view.comp)
 
 options(max.print = 4000) 
 sink(file.path(out_dir, "00_data_comp_first_view_cyano.txt"))
 "data.comp"
 data.comp
-table(sample_data(sample.comp)$country)
+table(sample_data(data.comp)$country)
 rank_names(data.comp)
 sample_variables(data.comp)
 "data.comp"
@@ -323,11 +317,10 @@ cat("Percent of reads removed cyano sample:", round(percentage_removed_cyano_sam
 as.data.frame(mean_cyanoremoved_by_genus)
 sink()
 
-
-
 ### > Single sample check / Taxon Check----------------
 
-# Inspect sample community composition for potential outlier 
+# Inspect sample community composition for potential outlier
+data.bacteria.p <- tax_filter(data.bacteria, min_prevalence = 2, min_total_abundance = 50, min_sample_abundance = 10) # simplyfy data for figure
 bacteria.comp.plot <- data.bacteria.p %>% 
   ps_filter(host_genus == "Aglais") %>% 
   comp_barplot(tax_level = "genus", n_taxa = 30,merge_other = F, sample_order = "bray",
@@ -339,7 +332,6 @@ bacteria.comp.plot <- data.bacteria.p %>%
 # Inspect unidentified ASVs in a single sample for manual BLAST and classification
 single.sample.check <- prune_samples(sample_names(data.comp) == "AW.B1.G067_S67", data.comp)  
 sample_sums(single.sample.check) # list total sample sum
-
 # Show genus names and taxa sums of top 20 ASVs in a sample
 data.frame(genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:20]), "genus"]),
   Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:20])
@@ -352,23 +344,17 @@ sort(data.frame(sum = sample_sums(singleASV)), decreasing = FALSE)
 tax_top(singleASV, n = 5, rank = "genus")
 
 ### > Taxon check 
+table(tax_table(data.bacteria)[, "phylum"], exclude = NULL)
 # e.g. p:Cyanobacteria, p:Abditibacteriota p:Thermotogae p:Gemmatimonadetes p:Verrucomicrobia 
-# check_taxa <- subset_taxa(data.bacteria, genus == "p:Proteobacteria_spc_spc_spc")
-# check_taxa <- subset_taxa(data.bacteria, genus == "o:Enterobacterales_spc_spc")
-# check_taxa <- subset_taxa(data.bacteria, genus == "f:Enterobacteriaceae_spc")
 check_taxa <- subset_taxa(data.bacteria, phylum == "p:Deinococcus-Thermus")
-
 # Show samples with that taxon
-sort(data.frame(sum = sample_sums(check_taxa),
-  host_genus = sample_data(check_taxa)$host_genus), decreasing = FALSE)
-
+sort(data.frame(sum = sample_sums(check_taxa),  host_genus = sample_data(check_taxa)$host_genus), decreasing = FALSE)
 # Show top ASVs with that taxon
 sort(data.frame(sum = taxa_sums(check_taxa)), decreasing = FALSE)
 
 
 ## 00 data.fixed  -----------
-# Remove low quality samples (troublemaker):
-# PCR negative samples and samples with high cyano reads e.g. >10%
+# Remove low quality samples (troublemaker): PCR negative samples and samples with high cyano reads e.g. >10%
 # Afterwards fix taxonomy with replace_tax_prefixes and phyloseq_validate functions
 
 data.bacteria
@@ -421,14 +407,14 @@ max_reads <- 500 # max 500 reads
 # Identify samples with high Cyano reads
 high_cyano_read_samples <- rownames(cyano.removed.frame)[
   cyano.removed.frame$type == "sample" &   
-    (cyano.removed.frame$percent_removed > max_percent | cyano.removed.frame$cyano > max_reads) ]
+    (cyano.removed.frame$cyano_percent > max_percent | cyano.removed.frame$cyano > max_reads) ]
 
 # Show samples with high Cyano reads
 high_cyano.reads.subset <- prune_samples(sample_names(data.comp) %in% high_cyano_read_samples, data.comp)
 high_cyano.reads.subset <- tax_filter(high_cyano.reads.subset , min_prevalence = 2, min_total_abundance = 10, min_sample_abundance = 10) # simplify dataset for figure
 high.cyano.samples.comp <- 
   high_cyano.reads.subset %>%
-  comp_barplot(tax_level = "genus", n_taxa = 30,merge_other = F, sample_order = "bray",
+  comp_barplot(tax_level = "genus", n_taxa = 30,merge_other = T, sample_order = "bray",
                label = "SAMPLE" ) +
   facet_wrap(vars(host_genus), scales = "free") +  
   coord_flip() + ggtitle("data.bacteria", "samples with > 500 cyano reads") +
@@ -507,14 +493,13 @@ troublemaker.ordinate.plot
 dev.off()
 
 # Cleanup pipeline
-rm(data.comp.p)
 rm(data.bacteria.subset)
 rm(data.bacteria.condensed)
 rm(data.bacteria.low)
 rm(data.bacteria.rel)
 rm(data.bacteria.p)
 rm(PCR.depth)
-rm(high.cyano.samples.comp)
+rm(cyano.removed)
 rm(troublemaker.comp)
 
 
@@ -540,7 +525,6 @@ print(prevcheck.removed.frame.sorted)
 # ASVs <0.001% / genera <0.01%
 
 data.fixed
-sample.fixed <- subset_samples(data.fixed, type=="sample")
 
 # Low stringent filtering to remove spurious phyla e.g. Acidobacteria, Tenericutes, Verrucomicrobia, candidate division WPS−1 etc.
 # Show prevalence of phyla 
@@ -610,24 +594,23 @@ ASV_percentage_removed # 0.8% removed
 # Low stringent filtering genus level
 data.filter.g <- aggregate_taxa(data.filter.ASV, "genus")
 data.frame(sort(taxa_sums(data.filter.g))) # remove genus below  0.01 percent (600 reads)
-data.filter.genus <- tax_filter(data.filter.ASV, tax_level = "genus", min_prevalence = 3, min_total_abundance = 600, min_sample_abundance = 10 )
-data.filter.g <- aggregate_taxa(data.filter.genus, "genus")
+data.prevfilter <- tax_filter(data.filter.ASV, tax_level = "genus", min_prevalence = 3, min_total_abundance = 600, min_sample_abundance = 10 )
+data.filter.g <- aggregate_taxa(data.prevfilter, "genus")
 data.frame(sort(taxa_sums(data.filter.g)))
 
-genus_percentage_removed <- 100 * (1 - sum(sample_sums(data.filter.genus)) / sum(sample_sums(data.filter.ASV)))
+genus_percentage_removed <- 100 * (1 - sum(sample_sums(data.prevfilter)) / sum(sample_sums(data.filter.ASV)))
 genus_percentage_removed  # 0.39% removed
 
 # optional: Filter on higher taxonomic ranks
-data.filter.f <- aggregate_taxa(data.filter.genus, "family")
+data.filter.f <- aggregate_taxa(data.prevfilter, "family")
 data.frame(sort(taxa_sums(data.filter.f))) 
 
-data.filter.o <- aggregate_taxa(data.filter.genus, "order")
+data.filter.o <- aggregate_taxa(data.prevfilter, "order")
 data.frame(sort(taxa_sums(data.filter.o))) # optional remove unresolved order
 
-data.filter.p <- aggregate_taxa(data.filter.genus, "phylum")
+data.filter.p <- aggregate_taxa(data.prevfilter, "phylum")
 data.frame(sort(taxa_sums(data.filter.p))) 
 
-data.prevfilter <- data.filter.genus
 #sort(data.frame(sum = sample_sums(data.prevfilter)), decreasing = TRUE)
 
 data.filter.prune500		= prune_taxa(taxa_sums(data.prevfilter)<500, data.prevfilter) # speed up figure
@@ -639,19 +622,16 @@ ASV.histogram.postfilter <- ggplot(ASV_sums_df_postfilter, aes(x = ASV_reads)) +
   coord_cartesian(ylim = c(0, 800), xlim = c(0, 500)) +
   theme(axis.title.y = element_blank())
 
-## Check what has been filtered
-prevfilter.removed  <- prune_taxa(setdiff(names(taxa_sums(data.fixed)), names(taxa_sums(data.prevfilter))), data.fixed)
-prevfilter.removed.sample <- subset_samples(prevfilter.removed , type=="sample")
+# Check what has been filtered
+prevfilter.removed <- prune_taxa(setdiff(names(taxa_sums(data.fixed)), names(taxa_sums(data.prevfilter))), data.fixed)
 
-# Calculate percentage of reads removed (sample level and total)
-percentage_removed_sample <- (sum(sample_sums(prevfilter.removed.sample)) / 
-                                sum(sample_sums(sample.fixed))) * 100
+# Percentage of reads removed overall and per sample
+percentage_removed_total <- 100 * sum(sample_sums(prevfilter.removed)) / sum(sample_sums(data.fixed))
+percentage_removed_sample <- 100 * sum(sample_sums(subset_samples(prevfilter.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.fixed, type == "sample")))
 
-percentage_removed_total <- (sum(sample_sums(prevfilter.removed)) / 
-                               sum(sample_sums(data.fixed))) * 100
-
-percentage_removed_sample # 1.08%
 percentage_removed_total #  1.19%
+percentage_removed_sample # 1.08%
+
 
 # Show filtered ASVs and genus names
 prevfilter.removed.taxa.genus <- data.frame(
@@ -666,6 +646,7 @@ prevfilter.removed.frame <- data.frame(
   prevfilter = sample_sums(prevfilter.removed),
   samplesum  = sample_sums(data.fixed),
   host_genus = sample_data(prevfilter.removed)$host_genus,
+  host_subfamily = sample_data(prevfilter.removed)$host_subfamily,
   type       = sample_data(prevfilter.removed)$type,
   PCR        = sample_data(prevfilter.removed)$PCR,
   prevfilter_percent = (sample_sums(prevfilter.removed) / sample_sums(data.fixed)) * 100)
@@ -693,29 +674,25 @@ data.frame(
   Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:20])
 
 # Show prevfilter removed taxa 
-prevfilter.removed.p <- tax_glom(prevfilter.removed,taxrank="phylum") # simplify to phylum rank to speed up figures
-prevfilter.removed.p <- prune_taxa(taxa_sums(prevfilter.removed.p) > 100, prevfilter.removed.p) # remove minor stuff
+prevfilter.removed.p <- tax_glom(prevfilter.removed,taxrank="phylum") #simplify to phylum makes psmelt smaller speed up figure
+prevfilter.removed.p <- prune_taxa(taxa_sums(prevfilter.removed.p) > 100, prevfilter.removed.p) # remove minor phyla to keep figure simple
 prevfilter.removed.melt <- psmelt(prevfilter.removed.p)
 
 prevfilter.lowrank <- ggplot(prevfilter.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(#position="fill",
   stat = "identity") +
-  coord_flip(xlim = c(0, 50)) + ggtitle("prevfilter removed taxa (low stringent filtering)")
+  coord_flip(xlim = c(0, 50)) + ggtitle("Prevalence filter")
 
 prevfilter.removed.plot <- ggplot(prevfilter.removed.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("prevfilter removed taxa (low stringent filtering)") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
+  stat = "identity") + ggtitle("Prevalence filter") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
 
+prevfilter.percentremoved <- ggplot(prevfilter.removed.frame , aes(x=prevfilter_percent, y=samplesum, color=host_subfamily, size = prevfilter)) +
+  geom_point(alpha=0.7) + facet_wrap(~type) + ylim(0, 80000) + xlim(0, 100) + 
+  xlab("percent removed") + ylab("read counts") 
 
-# Compare data frames before after  
-data.prevfilter.df <- as(sample_data(data.prevfilter),"data.frame")
-data.prevfilter.df$sumsfilter <- sample_sums(data.prevfilter)
-data.prevfilter.df$sumsfixed <- sample_sums(data.fixed)
-data.prevfilter.df$sumsremoved <- sample_sums(prevfilter.removed)
-data.prevfilter.df$percentremoved <- ((data.prevfilter.df$sumsremoved) / (data.prevfilter.df$sumsfixed)) * 100
-
-prevfilter.percentremoved <- ggplot(data.prevfilter.df , aes(x=percentremoved, y=sumsfilter, color=host_family, size = sumsremoved)) +
-  geom_point(alpha=0.7) + facet_wrap(~type) +
- ylim(0, 80000) + xlim(0, 50) + xlab("percent removed") + ylab("read counts") 
-
+prevfilter.percent.boxplot <- ggplot(prevfilter.removed.frame, aes(x = type, y = prevfilter_percent, fill = type)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +  
+  geom_jitter(width = 0.2, shape = 21, size = 2,  alpha = 0.7) +  
+  labs(x = "", y = "percent removed", title = "Prevalence filter")
 
 # Show prevalence of phyla after filtering
 prev_results2 <- calc_prevalence(data.prevfilter, rank = "phylum")
@@ -729,15 +706,15 @@ prevalence2 <- ggplot(prevdf2, aes(TotalAbundance, Prevalence / nsamples(data.pr
   facet_wrap(~phylum) + theme(legend.position="none") + ggtitle("data.prevfilter" ,
        "ASV cutoff (min total abundance = 60, min prevalence = 1.5%) ~0.001 percent "                ) 
 
-data.fixed.prune		= prune_taxa(taxa_sums(data.fixed)>20, data.fixed)
-data.fixed.phyla <- data.fixed.prune %>%
+data.fixed.phyla.comp <- data.fixed %>%
+  prune_taxa(taxa_sums(.) > 20, .) %>% # filter to simplify plot
   comp_barplot(tax_level = "phylum", n_taxa = 30, merge_other = FALSE, sample_order = "asis",
                label = NULL ) +
   facet_wrap(vars(country), scales = "free") +  
   coord_flip() + ggtitle("data.fixed" ) +
   theme(axis.ticks.y = element_blank(), strip.text = element_text(face = "bold"))
 
-data.prevfilter.phyla <- data.prevfilter %>%
+data.prevfilter.phyla.comp <- data.prevfilter %>%
   comp_barplot(tax_level = "phylum", n_taxa = 30, merge_other = FALSE, sample_order = "asis",
                label = NULL ) +
   facet_wrap(vars(country), scales = "free") +  
@@ -752,8 +729,9 @@ data.prevfilter.phyla <- data.prevfilter %>%
 
 # Visualize rare phyla
 data.minorphyla = subset_taxa(data.fixed, phylum!="Proteobacteria" & phylum!= "Actinobacteria" & phylum!= "Bacteroidetes" & phylum!= "Firmicutes" & phylum!= "Tenericutes" )
-data.minorphyla.p <- tax_glom(data.minorphyla,taxrank="phylum") # compress ps object
-data.minorphyla.melt <- psmelt(data.minorphyla.p)
+data.minorphyla <- tax_glom(data.minorphyla,taxrank="phylum") #simplify to phylum makes psmelt smaller speed up figure
+data.minorphyla <- prune_taxa(taxa_sums(data.minorphyla) > 100, data.minorphyla)  # remove minor phyla to keep figure simple
+data.minorphyla.melt <- psmelt(data.minorphyla)
 
 minorphyla <- ggplot(data.minorphyla.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(#position="fill",
   stat = "identity", linewidth = 5) + ggtitle("samples with rare phyla") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
@@ -770,9 +748,10 @@ ASV.histogram.postfilter
 prevfilter.lowrank
 prevfilter.removed.plot
 prevfilter.percentremoved
+prevfilter.percent.boxplot
 prevalence2 
-data.fixed.phyla
-data.prevfilter.phyla
+data.fixed.phyla.comp
+data.prevfilter.phyla.comp
 minorphyla
 minorphyla.lowrank
 dev.off()
@@ -801,98 +780,45 @@ prevfilter.removed.taxa.genus
 sink()
 
 # Cleanup pipeline
-rm(prevfilter.removed.sample)
+rm(data.prevcheck)
+rm(prevcheck.removed)
 rm(data.fixed.prune500)
-rm(data.fixed.prune)
-rm(data.fixed.phyla)
+rm(data.filter.ASV)
+rm(data.fixed.phyla.comp)
 rm(data.minorphyla.melt)
+rm(minorphyla)
+rm(minorphyla.lowrank)
+rm(prevfilter.removed.melt)
+rm(prevfilter.lowrank)
+rm(prevfilter.removed.plot)
 
-# 00 data.pruned1  ----------------
-# Remove positive controls (mock community) or spike-in control taxa from the dataset
+
+# 00 data.pruned  ----------------
+# Remove positive controls (mock community and spike-in control taxa) from the dataset:
 
 data.prevfilter
-sample.prevfilter <- subset_samples(data.prevfilter, type=="sample")
 
-# Identify Mock taxa spillover on ASV level
-data.mocks <- subset_samples(data.prevfilter, type == "positive") # select mocks
-sample_names(data.mocks)
-sample_sums(data.mocks)
-
-# Select top ASVs from data.mocks
+# Identify Mock taxa on ASV level
+data.mocks <- subset_samples(data.prevfilter, type == "positive")
+sample_names(data.mocks) # Select top ASVs from data.mocks
 mock.top <- names(sort(taxa_sums(data.mocks), decreasing = TRUE)[1:15])
-# Show genus names of ASVs
+
+# Show genus names of ASVs 
 mock.top.genus <- data.frame(
   #OTU = mock.top,
   Sum = taxa_sums(data.mocks)[mock.top],
   genus = as.character(tax_table(data.mocks)[mock.top, "genus"]))
-
-mock.top.genus # Show taxonomy information for the top ASVs
+mock.top.genus
 
 # (optional) select specific ASVs that should be kept
-keep_ASV <- c("ASV5", "ASV7", "ASV21")  # Keep those ASVs as they are not contamination 
-mock.select <- setdiff(mock.top, keep_ASV)
-#mock.select <- mock.top # if all can be used 
+keep_ASV <- c("ASV5", "ASV7", "ASV21")  # Keep those ASVs as they are probably no contamination 
+mock.taxa <- setdiff(mock.top, keep_ASV)
 
-# Check what has been removed
-spillover.removed1 <- prune_taxa(mock.select, data.prevfilter)
-spillover.removed1.sample <- subset_samples(spillover.removed1, type=="sample")
+data.pruned1 <- prune_taxa(!(taxa_names(data.prevfilter) %in% mock.taxa), data.prevfilter)
 
-# Should only remove mock community from positive controls
-spillover.melt <- psmelt(spillover.removed1)
-
-spillover.bar  <- ggplot(spillover.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("pos control removal") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
-
-spillover.lowrank <- ggplot(spillover.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("pos control removal") + coord_flip(xlim = c(0, 30))
-
-# Show spillover on plate frame
-spillover.plate <- plate_frame(spillover.removed1)
-
-# Remove spillover of mock taxa from dataset (top mock ASVs)
-data.pruned1 <- prune_taxa(!(taxa_names(data.prevfilter) %in% mock.select), data.prevfilter)
-
-data.prevfilter # pre-filter
-data.pruned1 # mock ASVs removed
-
-
-# Collect mock genera names for comp barplot
-mock_genera <- spillover.removed1%>% tax_top(n = 10, rank = "genus")
-# Count taxa number for comp barplot
-mock.number = length(unique(spillover.melt$genus))
-
-# Check MOCK removal
-spillover.prefilter.comp <- data.prevfilter %>%
-  comp_barplot(tax_level = "genus", n_taxa = mock.number, merge_other = T, sample_order = "asis",
-               label = NULL, tax_order = mock_genera
-  ) +  facet_wrap(vars(country), scales = "free") +  
-  coord_flip() + ggtitle(
-    "pos control pre-filter"  )
-
-spillover.postfilter.comp <- data.pruned1 %>%
-  comp_barplot(tax_level = "genus", n_taxa = mock.number, merge_other = T, sample_order = "asis",
-               label = NULL, tax_order = mock_genera
-  ) +   facet_wrap(vars(country), scales = "free") +  
-  coord_flip() + ggtitle(
-    "pos control post-filter"  )
-
-
-pdf(file.path(out_dir, "00_data_pruned1_pos_control_removal.pdf"), width=12, height=6)
-spillover.bar
-spillover.lowrank
-spillover.plate
-spillover.prefilter.comp
-spillover.postfilter.comp
-dev.off()
-
-
-## 00 data.pruned2  -----------------
-# Positive control removal fine tuning (remove remaining ASVs from mock controls)
-
-data.pruned1
-
+# Positive control removal fine tuning (remove remaining ASVs from Spike-in controls)
 mocks.leftover <- subset_samples(data.pruned1, type == "positive")
-mocks.leftover.p = prune_taxa(taxa_sums(mocks.leftover)>3, mocks.leftover) # simplify graph
+mocks.leftover.p = prune_taxa(taxa_sums(mocks.leftover)>10, mocks.leftover) # simplify graph
 #plot_bar(mocks.leftover.p,x="genus", title="mock leftover") # select groups to be removed
 list_of_mockgenera <- mocks.leftover.p %>%   tax_top(n = 30, rank = "genus")
 
@@ -901,18 +827,14 @@ list_of_mockgenera <- mocks.leftover.p %>%   tax_top(n = 30, rank = "genus")
 # Taxa often not fully resolved: Bacillales spc, Enterobacterales spc
 # Taxa in ZymoBIOMICS™ Spike-in Control I: Imtechella halotolerans, Allobacillus halotolerans
 
-table(tax_table(data.pruned1)[, "order"], exclude = NULL)
-# Optional: Remove unresolved taxa Actinobacteria spc, Firmicutes spc, Proteobacteria spc
+table(tax_table(data.pruned1)[, "order"], exclude = NULL) # Possibility to remove also unresolved taxa e.g. "Proteobacteria spc"
 
-
-# Collect "list_of_mockgenera" names to filter out for fine tuning. Keep taxa from the samples e.g. Gilliamella 
+# Use "list_of_mockgenera" names to filter out taxa for fine tuning. Keep taxa that are likely from the samples 
 mock.fine <- subset_taxa(mocks.leftover,
                            genus=="Allobacillus" | 
                            genus=="Actinobacteria spc" |
                            genus=="Bacillus" |
                            genus=="Bacillales spc"  |
-                           #genus=="Enterobacterales spc"  |
-                           #genus=="Enterobacteriaceae spc"  |
                            genus=="Firmicutes spc"| 
                            genus=="Imtechella" |
                            genus=="Limosilactobacillus" |
@@ -931,172 +853,202 @@ keep_ASV2 <- c("ASV96", "ASV1165" , "ASV17" , "ASV25" , "ASV52" , "ASV5378" , "A
                "ASV267" , "ASV163" , "ASV80", "ASV50", "ASV272" , "ASV62" , "ASV298") 
 mock.taxa.fine <- setdiff(mock.top2, keep_ASV2)
 
-## List samples with spillover
-spillover.removed2 = prune_taxa(mock.taxa.fine, data.pruned1)
-sort(data.frame(sum = sample_sums(spillover.removed2)), decreasing = FALSE)
-sort(data.frame(sum = taxa_sums(spillover.removed2)), decreasing = FALSE)
-
-percentage_spillover2_total <- (sum(sample_sums(spillover.removed2)) / 
-                                  sum(sample_sums(data.pruned1))) * 100
-# total percent removed
-percentage_spillover2_total  #0.36
+## List samples with spike-in controls
+spike.remove.finetuning = prune_taxa(mock.taxa.fine, data.pruned1)
+sort(data.frame(sum = sample_sums(spike.remove.finetuning)), decreasing = FALSE)
+sort(data.frame(sum = taxa_sums(spike.remove.finetuning)), decreasing = FALSE)
 
 # Inspect specific genus
-check.spillover2 <- subset_taxa(spillover.removed2, genus=="Pseudomonas" )
-sort(data.frame(sum = sample_sums(check.spillover2 )), decreasing = FALSE)
+check.finetuning <- subset_taxa(spike.remove.finetuning, genus=="Pseudomonas" )
+sort(data.frame(sum = sample_sums(check.finetuning )), decreasing = FALSE)
 
 # (optional) check individual samples if only mock gets removed, if not, put ASV manually in keep_ASV2
-single.sample.check <- prune_samples(sample_names(spillover.removed2) == "AW.B2.P62_S215", spillover.removed2) # AW.B2.P80_S234 AW.B2.P82_S237
-# single.sample.check <- subset_samples(spillover.removed2, study=="Peru") # look at entire projects  
-sample_sums(single.sample.check) # list total sample sum
+single.sample.check <- prune_samples(sample_names(spike.remove.finetuning) == "AW.B2.P62_S215", spike.remove.finetuning) # AW.B2.P80_S234 AW.B2.P82_S237
+# single.sample.check <- subset_samples(spike.remove.finetuning, study=="Peru") # look at entire projects  
+sample_sums(single.sample.check) # list sum of reads removed in this sample
 # Show genus names and taxa sums of top ASVs in a sample
 data.frame(
   genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10]), "genus"]),
   Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10])
 
-spillover.removed2.g <- tax_glom(spillover.removed2,taxrank="genus") # speed up figures (and safe space) 
-spillover2.melt <- psmelt(spillover.removed2.g)
+spike.remove.finetuning.g <- tax_glom(spike.remove.finetuning,taxrank="genus") # speed up figures (and safe space) 
+spike.finetuning.melt <- psmelt(spike.remove.finetuning.g)
 
-spillover.bar2 <- ggplot(spillover2.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
+spike.remove.finetuning.bar <- ggplot(spike.finetuning.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
   stat = "identity") + ggtitle("pos control removal finetuning") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
 
-spillover.lowrank2 <- ggplot(spillover2.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
+spike.remove.finetuning.lowrank <- ggplot(spike.finetuning.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
   stat = "identity") +
   coord_flip(xlim = c(0, 30))
 
-# Show spillover2 on plate frame
-spillover.plate2 <- plate_frame(spillover.removed2)
+# Unite mock taxa to be removed
+mock.taxa.remove <- union(mock.taxa, mock.taxa.fine)
 
-# Remove spillover of mock taxa from dataset
-data.pruned2 <- prune_taxa(!(taxa_names(data.pruned1) %in% mock.taxa.fine), data.pruned1)
+# Check what has been removed # Should only remove mock community from positive controls
+spike.removed <- prune_taxa(mock.taxa.remove, data.prevfilter)
+sort(data.frame(sum = sample_sums(spike.removed)), decreasing = FALSE)
+spike.removed.g <- tax_glom(spike.removed,taxrank="genus") # speed up figures (and safe space) 
+spike.remove.melt <- psmelt(spike.removed.g)
 
-# merge both spillover.removed
-spillover.removed <- merge_phyloseq(spillover.removed1, spillover.removed2)
-sort(data.frame(sum = sample_sums(spillover.removed)), decreasing = FALSE)
-spillover.removed.sample <- subset_samples(spillover.removed, type=="sample")
+spike.remove.bar  <- ggplot(spike.remove.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
+  stat = "identity", linewidth = 5) + ggtitle("pos control removal") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
 
-# Calculate percentage of spillover removed
-percentage_spillover_sample <- (sum(sample_sums(spillover.removed.sample)) / 
-                                  sum(sample_sums(sample.prevfilter ))) * 100
+spike.remove.lowrank <- ggplot(spike.remove.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
+  stat = "identity") + ggtitle("pos control removal") + coord_flip(xlim = c(0, 30))
 
-percentage_spillover_total <- (sum(sample_sums(spillover.removed)) / 
-                                 sum(sample_sums(data.prevfilter))) * 100
+# Percentage of reads removed overall and per sample
+percentage_spike_total <- 100 * sum(sample_sums(spike.removed)) / sum(sample_sums(data.prevfilter))
+percentage_spike_sample  <- 100 * sum(sample_sums(subset_samples(spike.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.prevfilter, type == "sample")))
 
-percentage_spillover_sample # 0.450%
-percentage_spillover_total  # 2.049%
+percentage_spike_total  # 2.049
+percentage_spike_sample # 0.450
 
-# Percentage of spillover removed per sample
-spillover.removed.frame <- data.frame(
-  spillover = sample_sums(spillover.removed),
+# Percentage of spike removed per sample
+spike.removed.frame <- data.frame(
+  spike = sample_sums(spike.removed),
   samplesum = sample_sums(data.prevfilter),
-  host_genus = sample_data(spillover.removed)$host_genus,
-  spillover_percent = (sample_sums(spillover.removed) / sample_sums(data.prevfilter)) * 100)
+  host_genus = sample_data(spike.removed)$host_genus,
+  host_subfamily = sample_data(spike.removed)$host_subfamily,
+  type = sample_data(spike.removed)$type,
+  spike_percent = (sample_sums(spike.removed) / sample_sums(data.prevfilter)) * 100)
 
 # Sort the dataframe in decreasing order
-spillover.removed.frame.sorted <- spillover.removed.frame[order(spillover.removed.frame$spillover_percent), ]
-print(spillover.removed.frame.sorted)
+spike.removed.frame.sorted <- spike.removed.frame[order(spike.removed.frame$spike_percent), ]
+print(spike.removed.frame.sorted)
 
-data.prevfilter # pre-filter
-data.pruned1 # pos control removal
-data.pruned2 # pos control removal fine tuning
+spike.remove.percentremoved <- ggplot(spike.removed.frame, aes(x=spike_percent, y=samplesum, color=host_genus, size = spike)) +
+  geom_point(alpha=0.7) + ylim(0, 80000) + xlim(0, 100) + 
+  xlab("percent removed") + ylab("read counts") + facet_wrap(~type)
 
-# Collect mock genera2 names for comp barplot
-mock_genera2 <- spillover.removed2%>% tax_top(n = 20, rank = "genus")
-# Count taxa number for comp barplot
-mock.number2 = length(unique(spillover2.melt$genus))
+spike.remove.percent.boxplot <- ggplot(spike.removed.frame, aes(x = type, y = spike_percent, fill = type)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +  
+  geom_jitter(width = 0.2, shape = 21, size = 2,  alpha = 0.7) +  
+  labs(x = "", y = "percent removed", title = "Spike-in removal")
 
-spillover.prefilter.comp2 <- data.pruned1 %>%
-  comp_barplot(tax_level = "genus", n_taxa = mock.number2, merge_other = TRUE, sample_order = "asis",
-               label = NULL, tax_order = mock_genera2 ) +
-  facet_wrap(vars(country), scales = "free") +  
-  coord_flip() + ggtitle("pos control pre-filter"  )
 
-spillover.postfilter.comp2 <- data.pruned2 %>%
-  comp_barplot(tax_level = "genus", n_taxa = 4, merge_other = TRUE, sample_order = "asis",
-               label = NULL, tax_order = mock_genera2 ) +
-  facet_wrap(vars(country), scales = "free") +  
-  coord_flip() + ggtitle("pos control post-filter"  )
+# Show spike on plate frame
+spike.remove.plate <- plate_frame(spike.removed)
 
-pdf(file.path(out_dir, "00_data_pruned2_pos_control_removal.pdf"), width=12, height=6)
+# If all okay remove mock taxa from dataset 
+data.pruned <- prune_taxa(!(taxa_names(data.prevfilter) %in% mock.taxa.remove), data.prevfilter)
+
+# Count taxa and collect genera names for comp barplot
+mock.number = length(unique(spike.remove.melt$genus))
+mock_genera <- spike.removed%>% tax_top(n = mock.number, rank = "genus")
+
+# Check MOCK removal
+spike.remove.prefilter.comp <- data.prevfilter %>%
+  comp_barplot(tax_level = "genus", n_taxa = mock.number, merge_other = T, sample_order = "asis",
+               label = NULL, tax_order = mock_genera ) +  facet_wrap(vars(country), scales = "free") +  
+  coord_flip() + ggtitle("pos control pre-filter")
+
+# Count leftover taxa number for comp barplot
+leftover_mock_genera <- intersect(mock_genera, tax_table(data.pruned)[, "genus"])
+mock.number.leftover <- length(leftover_mock_genera)
+
+spike.remove.postfilter.comp <- data.pruned %>%
+  comp_barplot(tax_level = "genus", n_taxa = mock.number.leftover, merge_other = T, sample_order = "asis",
+               label = NULL, tax_order = leftover_mock_genera ) +   facet_wrap(vars(country), scales = "free") +  
+  coord_flip() + ggtitle("pos control post-filter")
+
+pdf(file.path(out_dir, "00_data_pruned_control_removal.pdf"), width=12, height=6)
 mock.fine.select
-spillover.bar2
-spillover.lowrank2
-spillover.plate2
-spillover.prefilter.comp2
-spillover.postfilter.comp2
+spike.remove.finetuning.bar
+spike.remove.finetuning.lowrank
+spike.remove.bar
+spike.remove.lowrank
+spike.remove.percentremoved
+spike.remove.percent.boxplot
+spike.remove.plate
+spike.remove.prefilter.comp
+spike.remove.postfilter.comp
 dev.off()
 
 # Cleanup pipeline
-rm(spillover.bar2)
-rm(spillover.lowrank2)
-rm(spillover2.melt)
+rm(spike.remove.finetuning.bar)
+rm(spike.remove.finetuning.lowrank)
+rm(spike.finetuning.melt)
+rm(spike.remove.prefilter.comp)
+rm(spike.remove.melt)
+rm(spike.remove.bar)
+rm(spike.remove.lowrank)
+rm(data.pruned1)
 
-
-sink(file.path(out_dir, "00_data_pruned2_pos_control_removal.txt"))
+sink(file.path(out_dir, "00_data_pruned_control_removal.txt"))
 "mock_genera"
 mock_genera
-"mock_genera2"
-mock_genera2
-"spillover.removed.frame.sorted"
-print(spillover.removed.frame.sorted)
+"spike.removed.frame.sorted"
+print(spike.removed.frame.sorted)
 "data.prevfilter "
 data.prevfilter 
-"data.pruned2"
-data.pruned2 
-"percentage_spillover_sample"
-percentage_spillover_sample
-"percentage_spillover_total"
-percentage_spillover_total
+"data.pruned"
+data.pruned 
+cat("Percent reads removed spike-in controls total:", round(percentage_spike_total, 2), "%\n")
+cat("Percent reads removed spike-in controls sample:", round(percentage_spike_sample, 2), "%\n")
 sink()
 
 
-## 00 data.decontam  -------------------
-# Apply decontam package on cleared controls
-# More as a final control step, does not filter much  
+# Optional: Remove samples with high spike-in amount (when either any of these conditions is true)
+spike_max_percent <- 5  # Define thresholds spike_max 10%
+spike_max_reads   <- 2000 # Define thresholds spike_max 500 reads
 
-data.pruned2
-sample.pruned2 <- subset_samples(data.pruned2, type=="sample")
+# Identify samples with high spike-in reads
+high_spike_samples <- rownames(spike.removed.frame)[
+  #spike.removed.frame$type == "sample" &   # select only samples
+    (spike.removed.frame$spike_percent > spike_max_percent | spike.removed.frame$spike > spike_max_reads) ]
+
+# Show samples with high spike-in reads
+high.spike.subset <- prune_samples(sample_names(data.prevfilter) %in% high_spike_samples, data.prevfilter)
+
+high.spike.samples.comp <- high.spike.subset  %>%
+  comp_barplot(tax_level = "genus", n_taxa = mock.number, merge_other = T, sample_order = "asis",
+               label = "SAMPLE", tax_order = mock_genera ) +   facet_wrap(vars(host_genus), scales = "free") +  
+  coord_flip() + ggtitle("spike-in removal", "collect samples with high spike-in reads (optional removal)")
+
+# data.pruned2 <- prune_samples(!(sample_names(data.pruned) %in% high_spike_samples), data.pruned)
+
+
+## 00 data.decontam  -------------------
+# Apply decontam package on cleared controls (More as a final control step, does not filter much)  
+data.pruned
 
 #### decontam.neg ----
 # Identify ASVs as potential contamination using negative controls 
-sample_data(data.pruned2)$is.neg <- sample_data(data.pruned2)$type == "negative"  
-contam.neg.prev <- isContaminant(data.pruned2, method="prevalence", neg="is.neg", threshold=0.2) # 0.2
+sample_data(data.pruned)$is.neg <- sample_data(data.pruned)$type == "negative"  
+contam.neg.prev <- isContaminant(data.pruned, method="prevalence", neg="is.neg", threshold=0.2) # 0.2
 table(contam.neg.prev$contaminant) # adjust threshold 0.1 to 0.4
 head(which(contam.neg.prev$contaminant))
 
-data.pruned2.pa <- transform_sample_counts(data.pruned2, function(abund) 1*(abund>0))
-data.pruned2.pa.neg <- prune_samples(sample_data(data.pruned2.pa)$type == "negative", data.pruned2.pa)
-data.pruned2.pa.sam <- prune_samples(sample_data(data.pruned2.pa)$type == "sample", data.pruned2.pa)
+data.pruned.pa <- transform_sample_counts(data.pruned, function(abund) 1*(abund>0))
+data.pruned.pa.neg <- prune_samples(sample_data(data.pruned.pa)$type == "negative", data.pruned.pa)
+data.pruned.pa.sam <- prune_samples(sample_data(data.pruned.pa)$type == "sample", data.pruned.pa)
 # Make data.frame of prevalence in positive and negative samples
-df.pa <- data.frame(pa.pos=taxa_sums(data.pruned2.pa.sam), pa.neg=taxa_sums(data.pruned2.pa.neg),
+df.pa <- data.frame(pa.pos=taxa_sums(data.pruned.pa.sam), pa.neg=taxa_sums(data.pruned.pa.neg),
                     contaminant=contam.neg.prev$contaminant)
 decontam.neg <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() +
   xlab("Prevalence (Negative Controls)") + ylab("Prevalence (True Samples)")
 
 # create phyloseq object with contaminant ASVs removed  
-data.decontam.neg <- prune_taxa(!contam.neg.prev$contaminant, data.pruned2)
-
-
+data.decontam.neg <- prune_taxa(!contam.neg.prev$contaminant, data.pruned)
 
 # Identify ASVs removed by decontam
-decontam_asvs <- setdiff(taxa_names(data.pruned2), taxa_names(data.decontam.neg))
+decontam_asvs <- setdiff(taxa_names(data.pruned), taxa_names(data.decontam.neg))
 keep_decontam <- c( "ASV3" , "ASV193" , "ASV5871"  , "ASV225" ,  "ASV250" , "ASV1445", 
                     "ASV263" ,  "ASV266" ,  "ASV268",   "ASV274" ,  "ASV333" , 
                     "ASV334"  , "ASV3919",  "ASV457"  , "ASV62" ,   "ASV834" , "ASV49"  ) 
 
 decontam_me_neg <- setdiff(decontam_asvs, keep_decontam )
 #decontam_me_neg <- (decontam_asvs)
-decontam.removed.neg <- prune_taxa(decontam_me_neg, data.pruned2) 
+decontam.removed.neg <- prune_taxa(decontam_me_neg, data.pruned) 
 
 # Show top ASVs and genus names in decontam.removed.neg
 data.frame(
   genus = as.character(tax_table(decontam.removed.neg)[names(sort(taxa_sums(decontam.removed.neg), decreasing = TRUE)[1:10]), "genus"]),
   Taxa_Sum = sort(taxa_sums(decontam.removed.neg), decreasing = TRUE)[1:10])
 
-# check individual ASVs in dataset if contamination or not
-# manually put in "keep_decontam" if no contamination
+# Check individual ASVs in dataset if contamination or not, manually put in "keep_decontam" if no contamination
 tag_ASV <- c("ASV49") 
-singleASV <- prune_taxa(tag_ASV, data.pruned2)
+singleASV <- prune_taxa(tag_ASV, data.pruned)
 sort(data.frame(sum = sample_sums(singleASV)), decreasing = FALSE)
 
 data.frame(sort(sample_sums(decontam.removed.neg), decreasing = T)[1:10])
@@ -1123,28 +1075,28 @@ plate.decontam.neg  <- plate_frame(decontam.removed.neg)
 
 #### decontam pos ----
 # Identify ASVs as potential contamination using positive controls
-sample_data(data.pruned2)$is.pos <- sample_data(data.pruned2)$type == "positive"  
-contam.pos.prev <- isContaminant(data.pruned2, method="prevalence", neg="is.pos", threshold=0.1) #0.1 threshold=0.04
+sample_data(data.pruned)$is.pos <- sample_data(data.pruned)$type == "positive"  
+contam.pos.prev <- isContaminant(data.pruned, method="prevalence", neg="is.pos", threshold=0.1) #0.1 threshold=0.04
 table(contam.pos.prev$contaminant)
 head(which(contam.pos.prev$contaminant))
 
-data.pruned2.pa.pos <- prune_samples(sample_data(data.pruned2.pa)$type == "positive", data.pruned2.pa)
+data.pruned.pa.pos <- prune_samples(sample_data(data.pruned.pa)$type == "positive", data.pruned.pa)
 # Make data.frame of prevalence in positive and negative samples
-df.pa <- data.frame(pa.pos=taxa_sums(data.pruned2.pa.sam), pa.neg=taxa_sums(data.pruned2.pa.pos),
+df.pa <- data.frame(pa.pos=taxa_sums(data.pruned.pa.sam), pa.neg=taxa_sums(data.pruned.pa.pos),
                     contaminant=contam.pos.prev$contaminant)
 decontam.pos <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() +
   xlab("Prevalence (Positive Controls)") + ylab("Prevalence (True Samples)")
 
 # create phyloseq object with contaminant ASVs removed  
-data.decontam.pos <- prune_taxa(!contam.pos.prev$contaminant, data.pruned2)
+data.decontam.pos <- prune_taxa(!contam.pos.prev$contaminant, data.pruned)
 
 # Identify ASVs removed by decontam.pos
-decontam.pos_asvs <- setdiff(taxa_names(data.pruned2), taxa_names(data.decontam.pos))
+decontam.pos_asvs <- setdiff(taxa_names(data.pruned), taxa_names(data.decontam.pos))
 keep_decontam.pos <- c( "ASV85", "ASV334" , "ASV8304",  "ASV14859" , "ASV1473" , "ASV12739" ,
                         "ASV121", "ASV194", "ASV3076", "ASV12115","ASV8279","ASV2235" )   
 #decontam_me_pos <- (decontam.pos_asvs)
 decontam_me_pos <- setdiff(decontam.pos_asvs, keep_decontam.pos)
-decontam.removed.pos <- prune_taxa(decontam_me_pos, data.pruned2)
+decontam.removed.pos <- prune_taxa(decontam_me_pos, data.pruned)
 
 # Top ASVs and genus names in decontam.removed.pos
 data.frame(
@@ -1156,7 +1108,7 @@ data.frame(
 data.frame(sort(sample_sums(decontam.removed.pos), decreasing = T)[1:10])
 sum(taxa_sums(decontam.removed.pos))
 
-single.sample.check <- prune_samples(sample_names(data.pruned2) == "AW.B1.P003_S114", decontam.removed.pos) # AW.B1.G056_S58 AW.B1.G029_S29
+single.sample.check <- prune_samples(sample_names(data.pruned) == "AW.B1.P003_S114", decontam.removed.pos) # AW.B1.G056_S58 AW.B1.G029_S29
 data.frame(
   genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10]), "genus"]),
   Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10])
@@ -1177,31 +1129,32 @@ plate.decontam.pos <- plate_frame(decontam.removed.pos)
 
 # Combine decontam neg and pos
 decontam_me_combined <- union(decontam_me_neg, decontam_me_pos)
+decontam.removed <- prune_taxa(decontam_me_combined, data.pruned)
 
-decontam.removed <- prune_taxa(decontam_me_combined, data.pruned2)
+# Remove decontam taxa from dataset
+data.decontam <- prune_taxa(!(taxa_names(data.pruned) %in% decontam_me_combined), data.pruned)
 
-# Remove decontam taxa from dataset data.pruned3
-data.decontam <- prune_taxa(!(taxa_names(data.pruned2) %in% decontam_me_combined), data.pruned2)
-
-data.pruned2  # pos controls removed
+data.pruned  # pos control taxa removed
 data.decontam # decontam removed
 
 # Relative amount removed by decontam
-data.pruned2.rel <- transform_sample_counts(data.pruned2, function(x) x / sum(x))
-decontam.removed.rel <- subset_taxa(data.pruned2.rel, taxa_names(data.pruned2.rel) %in% taxa_names(decontam.removed))
-decontam.removed.rel <- tax_glom(decontam.removed.rel,taxrank="order") # compress
-decontam.removed.rel.melt <- psmelt(decontam.removed.rel)
+decontam.removed.rel <- subset_taxa(transform_sample_counts(data.pruned, function(x) x / sum(x)), # normalize first
+  taxa_names(transform_sample_counts(data.pruned, function(x) x / sum(x))) %in% decontam_me_combined ) %>%
+  tax_glom(taxrank = "order")  # Collapse to order to compress ps object
 
-decontam.removed.rel.plot <- ggplot(decontam.removed.rel.melt, aes(x=Sample, y=Abundance, fill=order)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("percent decontam removed") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
+decontam.removed.rel.plot <- ggplot(psmelt(decontam.removed.rel),
+                                    aes(x = Sample, y = Abundance, fill = order)) +
+  geom_bar(stat = "identity", linewidth = 5) +  facet_wrap(~host_subfamily, scales = "free_x") +
+  ggtitle("percent decontam removed") + theme(axis.text.x = element_blank())
 
 # Make dataframe with percent removed decontam per sample
 decontam.removed.frame <- data.frame(
   decontam = sample_sums(decontam.removed),
-  samplesum = sample_sums(data.pruned2),
+  samplesum = sample_sums(data.pruned),
   host_genus = sample_data(decontam.removed)$host_genus,
+  host_subfamily = sample_data(decontam.removed)$host_subfamily,
   type = sample_data(decontam.removed)$type,
-  decontam_percent = (sample_sums(decontam.removed) / sample_sums(data.pruned2)) * 100 )
+  decontam_percent = (sample_sums(decontam.removed) / sample_sums(data.pruned)) * 100 )
 
 # Sort by decontam_percent
 decontam.removed.frame.sorted <- decontam.removed.frame[
@@ -1209,27 +1162,21 @@ decontam.removed.frame.sorted <- decontam.removed.frame[
 
 print(decontam.removed.frame.sorted)
 
-# Compare data frames before after
-data.decontam.df <- as(sample_data(data.decontam),"data.frame")
-data.decontam.df$sump2 <- sample_sums(data.pruned2)
-data.decontam.df$sump3 <- sample_sums(data.decontam)
-data.decontam.df$decontam <- sample_sums(decontam.removed)
-data.decontam.df$percentdecontam <- ((data.decontam.df$decontam) / (data.decontam.df$sump2)) * 100
-
-decontam.percentremoved <- ggplot(data.decontam.df, aes(x=percentdecontam, y=sump3, shape=type, color=host_family, size = decontam)) +
+## Check what has been decontamed
+decontam.percentremoved <- ggplot(decontam.removed.frame, aes(x=decontam_percent, y=samplesum, color=host_subfamily, size = decontam)) +
   geom_point(alpha=0.7) + ylim(0, 50000) + xlim(0, 75) + xlab("percent removed") + ylab("read counts") + facet_wrap(~type)
 
-## Check what has been decontamed
-decontam.removed.sample <- subset_samples(decontam.removed, type=="sample")
+decontam.percent.boxplot <- ggplot(decontam.removed.frame, aes(x = type, y = decontam_percent, fill = type)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +  
+  geom_jitter(width = 0.2, shape = 21, size = 2,  alpha = 0.7) +  
+  labs(x = "", y = "percent removed", title = "decontam removal")
 
-# Divide each count by the total count and multiply by 100 to get the percentage
-percentage_removed_decontam_sample <- (sum(sample_sums(decontam.removed.sample)) / 
-                                         sum(sample_sums(sample.pruned2))) * 100
-percentage_removed_decontam_total <- (sum(sample_sums(decontam.removed)) / 
-                                     sum(sample_sums(data.pruned2))) * 100
+# Percentage of reads removed overall and per sample
+percentage_removed_decontam_total <- 100 * sum(sample_sums(decontam.removed)) / sum(sample_sums(data.pruned))
+percentage_removed_decontam_sample  <- 100 * sum(sample_sums(subset_samples(decontam.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.pruned, type == "sample")))
 
-percentage_removed_decontam_sample # 0.133%
 percentage_removed_decontam_total  # 0.156%
+percentage_removed_decontam_sample # 0.133%
 
 # Mean percent decontam by host genus
 mean_decontam_by_genus <- decontam.removed.frame.sorted %>%
@@ -1237,7 +1184,6 @@ mean_decontam_by_genus <- decontam.removed.frame.sorted %>%
   group_by(host_genus) %>%
   summarise(decontam_percent = round(mean(decontam_percent, na.rm = TRUE), 2)) %>% 
   arrange(desc(decontam_percent))
-
 
 as.data.frame(mean_decontam_by_genus)
 
@@ -1252,7 +1198,7 @@ decontam.removed.top.ASVs
 
 
 # View the sorted dataframe
-sink(file.path(out_dir, "00_data_pruned3_decontam.txt"))
+sink(file.path(out_dir, "00_data_pruned_decontam.txt"))
 print(decontam.removed.frame.sorted)
 cat("Percent reads removed decontam total:", round(percentage_removed_decontam_total, 2), "%\n")
 cat("Percent reads removed decontam sample:", round(percentage_removed_decontam_sample, 2), "%\n")
@@ -1262,7 +1208,7 @@ as.data.frame(mean_decontam_by_genus)
 decontam.removed.top.ASVs
 sink()
 
-pdf(file.path(out_dir, "00_data_pruned3_decontam.pdf"), width=12, height=6)
+pdf(file.path(out_dir, "00_data_pruned_decontam.pdf"), width=12, height=6)
 decontam.neg
 decontam.removed.neg.lowrank
 decontam.removed.neg.bargraph 
@@ -1271,8 +1217,14 @@ decontam.removed.pos.lowrank
 decontam.removed.pos.bargraph
 decontam.removed.rel.plot
 decontam.percentremoved
+decontam.percent.boxplot
 dev.off()
 
+rm(data.pruned.pa)
+rm(data.pruned.pa.sam)
+rm(data.decontam.pos)
+rm(data.decontam.neg)
+rm(decontam.removed.rel.plot)
 
 ### Check data.decontam
 data.decontam
@@ -1291,17 +1243,17 @@ filterframe.df <- as(sample_data(data.decontam),"data.frame")
 filterframe.df$A_data.comp <- sample_sums(data.comp.subset)
 filterframe.df$B_data.bacteria <- sample_sums(data.fixed) # cyano removed
 filterframe.df$C_data.prevfilter <- sample_sums(data.prevfilter) # prevfilter
-filterframe.df$D_data.pruned <- sample_sums(data.pruned2) # spillover removed
+filterframe.df$D_data.pruned <- sample_sums(data.pruned) # spike removed
 filterframe.df$E_data.decontam <- sample_sums(data.decontam) # decontam removed
 
 filterframe.df$B_Shannon <- estimate_richness(data.fixed, measures = "Shannon")$Shannon
 filterframe.df$C_Shannon <- estimate_richness(data.prevfilter, measures = "Shannon")$Shannon
-filterframe.df$D_Shannon <- estimate_richness(data.pruned2, measures = "Shannon")$Shannon
+filterframe.df$D_Shannon <- estimate_richness(data.pruned, measures = "Shannon")$Shannon
 filterframe.df$E_Shannon <- estimate_richness(data.decontam, measures = "Shannon")$Shannon
 
 filterframe.df$B_cyanoremoved <- sample_sums(cyano.removed.subset) 
 filterframe.df$C_prevremoved <- sample_sums(prevfilter.removed)
-filterframe.df$D_spillremoved <- sample_sums(spillover.removed)
+filterframe.df$D_spillremoved <- sample_sums(spike.removed)
 filterframe.df$E_decontamremoved <- sample_sums(decontam.removed)
 
 filterframe.df$B_cyanopercent <- ((filterframe.df$B_cyanoremoved) / (filterframe.df$A_data.comp)) * 100
@@ -1411,17 +1363,27 @@ data.bacteria.rel.PCoA.score <- cbind(
   as(sample_data(data.bacteria.rel), "data.frame"),
   as.data.frame(data.bacteria.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.bacteria)))
-data.bacteria.ordination <- ggplot(data.bacteria.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.bacteria"  ) 
- 
+data.bacteria.rel.PCoA.score$rich <- estimate_richness(data.bacteria, measures=c("Observed", "InvSimpson", "Shannon"))
+data.bacteria.rel.PCoA.score$LT2000 <- ifelse(sample_sums(data.bacteria) > 2000, 'HT', 'LT2000')
+data.bacteria.rel.PCoA.score$Sample_Name <- rownames(data.bacteria.rel.PCoA.score)
+data.bacteria.rel.PCoA.score$label <- ifelse(data.bacteria.rel.PCoA.score$Sample_Name %in% all_troublemaker, data.bacteria.rel.PCoA.score$Sample_Name, NA)
+data.bacteria.rel.PCoA.score$type <- factor(data.bacteria.rel.PCoA.score$type, levels = c("sample", "negative", "positive"))
+data.bacteria.ordination <- ggplot(data.bacteria.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=type)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.bacteria"  ) + 
+  geom_label(aes(label = label), alpha = 0.4, size = 3, na.rm = TRUE)
+
+
 data.fixed.rel <- transform_sample_counts(data.fixed, function(x) x/sum(x))
 data.fixed.rel.PCoA <-  ordinate(data.fixed.rel, method="PCoA", "bray")
 data.fixed.rel.PCoA.score <- cbind(
   as(sample_data(data.fixed.rel), "data.frame"),
   as.data.frame(data.fixed.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.fixed)))
-data.fixed.ordination <- ggplot(data.fixed.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.fixed"  ) 
+data.fixed.rel.PCoA.score$rich <- estimate_richness(data.fixed, measures=c("Observed", "InvSimpson", "Shannon"))
+data.fixed.rel.PCoA.score$LT2000 <- ifelse(sample_sums(data.fixed) > 2000, 'HT', 'LT2000')
+data.fixed.rel.PCoA.score$type <- factor(data.fixed.rel.PCoA.score$type, levels = c("sample", "negative", "positive"))
+data.fixed.ordination <- ggplot(data.fixed.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=type)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.fixed" ) 
 
 data.prevfilter.rel <- transform_sample_counts(data.prevfilter, function(x) x/sum(x))
 data.prevfilter.rel.PCoA <-  ordinate(data.prevfilter.rel, method="PCoA", "bray")
@@ -1429,8 +1391,11 @@ data.prevfilter.rel.PCoA.score <- cbind(
   as(sample_data(data.prevfilter.rel), "data.frame"),
   as.data.frame(data.prevfilter.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.prevfilter)))
-data.prevfilter.ordination <- ggplot(data.prevfilter.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.prevfilter"  ) 
+data.prevfilter.rel.PCoA.score$rich <- estimate_richness(data.prevfilter, measures=c("Observed", "InvSimpson", "Shannon"))
+data.prevfilter.rel.PCoA.score$LT2000 <- ifelse(sample_sums(data.prevfilter) > 2000, 'HT', 'LT2000')
+data.prevfilter.rel.PCoA.score$type <- factor(data.prevfilter.rel.PCoA.score$type, levels = c("sample", "negative", "positive"))
+data.prevfilter.ordination <- ggplot(data.prevfilter.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=type)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.prevfilter" ) 
 
 data.decontam.rel <- transform_sample_counts(data.decontam, function(x) x/sum(x))
 data.decontam.rel.PCoA <-  ordinate(data.decontam.rel, method="PCoA", "bray")
@@ -1438,8 +1403,10 @@ data.decontam.rel.PCoA.score <- cbind(
   as(sample_data(data.decontam.rel), "data.frame"),
   as.data.frame(data.decontam.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.decontam)))
-data.decontam.ordination <- ggplot(data.decontam.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.decontam"  ) 
+data.decontam.rel.PCoA.score$rich <- estimate_richness(data.decontam, measures=c("Observed", "InvSimpson", "Shannon"))
+data.decontam.rel.PCoA.score$LT2000 <- ifelse(sample_sums(data.decontam) > 2000, 'HT', 'LT2000')
+data.decontam.ordination <- ggplot(data.decontam.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=LT2000)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.decontam" ) 
 
 data.high2000 = prune_samples(sample_sums(data.decontam)>=2000, data.decontam)
 data.high2000.rel <- transform_sample_counts(data.high2000, function(x) x/sum(x))
@@ -1448,8 +1415,11 @@ data.high2000.rel.PCoA.score <- cbind(
   as(sample_data(data.high2000.rel), "data.frame"),
   as.data.frame(data.high2000.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.high2000)))
-data.high2000.ordination <- ggplot(data.high2000.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.high2000"  ) 
+data.high2000.rel.PCoA.score$rich <- estimate_richness(data.high2000, measures=c("Observed", "InvSimpson", "Shannon"))
+data.high2000.rel.PCoA.score$type <- factor(data.high2000.rel.PCoA.score$type, levels = c("sample", "negative", "positive"))
+data.high2000.ordination <- ggplot(data.high2000.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=type)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.high2000" ) 
+
 
 data.high5000 = prune_samples(sample_sums(data.decontam)>=5000, data.decontam)
 data.high5000.rel <- transform_sample_counts(data.high5000, function(x) x/sum(x))
@@ -1458,34 +1428,35 @@ data.high5000.rel.PCoA.score <- cbind(
   as(sample_data(data.high5000.rel), "data.frame"),
   as.data.frame(data.high5000.rel.PCoA$vectors[, 1:3]) ) %>%
   mutate(logsum = log10(sample_sums(data.high5000)))
-data.high5000.ordination <- ggplot(data.high5000.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = logsum, shape = type)) +
-  geom_point(size = 6, alpha = 0.8) + scale_color_viridis_c(direction = -1) + theme_grid() + labs(title = "data.high5000"  ) 
-
+data.high5000.rel.PCoA.score$rich <- estimate_richness(data.high5000, measures=c("Observed", "InvSimpson", "Shannon"))
+data.high5000.rel.PCoA.score$type <- factor(data.high5000.rel.PCoA.score$type, levels = c("sample", "negative", "positive"))
+data.high5000.ordination <- ggplot(data.high5000.rel.PCoA.score, aes(x = Axis.1, y = Axis.2, color = rich$Shannon, size= logsum , shape=type)) +
+  geom_point(alpha = 0.8) + scale_color_viridis_c(direction = 1) + theme_grid() + labs(title = "data.high5000" )
 
 # Alpha div
 
-data.bacteria.rich  <- plot_richness(data.bacteria,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.bacteria.rich  <- plot_richness(data.bacteria,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) + ggtitle("data.bacteria")
 
-data.fixed.rich  <- plot_richness(data.fixed,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.fixed.rich  <- plot_richness(data.fixed,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) + ggtitle("data.fixed")
 
-data.prevfilter.rich  <- plot_richness(data.prevfilter,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.prevfilter.rich  <- plot_richness(data.prevfilter,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) + ggtitle("data.prevfilter")
 
-data.decontam.rich  <- plot_richness(data.decontam,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.decontam.rich  <- plot_richness(data.decontam,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) + ggtitle("data.decontam")
 
-data.high2000.rich  <- plot_richness(data.high2000,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.high2000.rich  <- plot_richness(data.high2000,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) +
   ggtitle("data.high2000") # + geom_label(aes(label = sampleID, color=host_tribe), size = 4) 
 
-data.high5000.rich  <- plot_richness(data.high5000,x="host_subfamily", measures=c("Shannon","Observed")) +
+data.high5000.rich  <- plot_richness(data.high5000,x="host_subfamily", measures=c("Shannon","Observed", "InvSimpson")) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   geom_point(size=4, aes(color=host_subfamily))  +geom_boxplot(aes(group = host_subfamily)) +
    ggtitle("data.high5000") # +geom_label(aes(label = sampleID, color=host_tribe), size = 4) 
@@ -1506,6 +1477,12 @@ data.high2000.rich
 data.high5000.rich
 dev.off()
 
+rm(data.bacteria.rel)
+rm(data.fixed.rel)
+rm(data.prevfilter.rel)
+rm(data.high2000)
+rm(data.high2000.rel)
+rm(data.high5000.rel)
 
 ## 00 data.high  LT2000 cut-off ----------------------
 # Set threshold and remove low throughput samples e.g. < LT2000
@@ -1530,30 +1507,33 @@ sample.sum.rank2 <-  ggplot(clean.melt, aes(x=reorder(Sample, Abundance), y=Abun
 
 
 # sample sum vs shannon div vs Actinobacteria
+
+data.decontam.df <- as(sample_data(data.decontam),"data.frame")
+data.decontam.df$samplesum <- sample_sums(data.decontam)
+data.decontam.df$Shannon <- estimate_richness(data.decontam, measures=c("Shannon"))$Shannon
+data.decontam.df$Observed <- estimate_richness(data.decontam, measures=c("Observed"))$Observed
 head(data.decontam.df)
-data.decontam.df$rich <- estimate_richness(data.decontam, measures=c("Observed", "Chao1", "Shannon", "Fisher"))
-data.decontam.df$Actinobacteria <- sample_sums(subset_taxa(data.decontam.rel, phylum=="Actinobacteria" ))
-data.decontam.df$Sphingomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Sphingomonas" ))
-data.decontam.df$Brevundimonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Brevundimonas" ))
-data.decontam.df$Pseudomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Pseudomonas" ))
+data.decontam.df$Actinobacteria <- sample_sums(subset_taxa(data.decontam.rel, phylum=="Actinobacteria"))
+data.decontam.df$Sphingomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Sphingomonas"))
+data.decontam.df$Brevundimonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Brevundimonas"))
+data.decontam.df$Pseudomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Pseudomonas"))
 data.decontam.df$Bacillus <- sample_sums(subset_taxa(data.decontam.rel, genus=="Bacillus" ))
 
 # Sample sum vs Shannon diversity
-plot.actino <- ggplot(data.decontam.df, aes(x=rich$Shannon, y=sump3, size = Actinobacteria, color=subtype))  + geom_point(alpha=0.7) + 
+plot.actino <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Actinobacteria, color=subtype))  + geom_point(alpha=0.7) + 
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +  ggtitle(paste("LT:", cutoff)) + ylab("read counts")
 
-plot.Brev <- ggplot(data.decontam.df, aes(x=rich$Shannon, y=sump3, size = Brevundimonas, color=subtype))  + geom_point(alpha=0.7) + 
+plot.Brev <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Brevundimonas, color=subtype))  + geom_point(alpha=0.7) + 
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +  ggtitle(paste("LT:", cutoff)) + ylab("read counts")
 
-plot.Bacillus <- ggplot(data.decontam.df, aes(x=rich$Shannon, y=sump3, size = Bacillus, color=subtype))  + geom_point(alpha=0.7) + 
+plot.Bacillus <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Bacillus, color=subtype))  + geom_point(alpha=0.7) + 
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +  ggtitle(paste("LT:", cutoff)) + ylab("read counts")
 
-sum.shannon.genus <- ggplot(data.decontam.df, aes(x=rich$Shannon, y=sump3, size = Sphingomonas, color=subtype, shape=type))  +
+sum.shannon.genus <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Sphingomonas, color=subtype))  +
   geom_point(alpha=0.7)  +
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +
   ggtitle(paste("LT:", cutoff)) + ylim(0, 10000)  +
   facet_wrap(~host_genus) + ylab("read counts")
-
 
 # Remove LT2000 samples with defined cut-off e.g. 2000
 data.high = prune_samples(sample_sums(data.decontam)>=cutoff, data.decontam)
@@ -1564,34 +1544,32 @@ data.high.rel = transform_sample_counts(data.high, function(x) x/sum(x))
 
 data.high.df <- as(sample_data(data.high),"data.frame")
 data.high.df$samplesum <- sample_sums(data.high)
-data.high.df$rich <- estimate_richness(data.high, measures=c("Observed", "Chao1", "Shannon", "Fisher"))
+data.high.df$Shannon <- estimate_richness(data.high, measures=c("Shannon"))$Shannon
 data.high.df$Sphingomonas <- sample_sums(subset_taxa(data.high.rel, genus=="Sphingomonas" ))
 data.high.df$Bacillus <- sample_sums(subset_taxa(data.high.rel, genus=="Bacillus" ))
 
-sumflop <- ggplot(data.decontam.df, aes(x=rich$Shannon, y=sump3, size = Sphingomonas, color=subtype))  + geom_point(alpha=0.7)  + ggtitle(
+sumflop <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Sphingomonas, color=subtype))  + geom_point(alpha=0.7)  + ggtitle(
   "data.decontam"  ) + ylim(0, 75000) + xlim(0, 5) + geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) + ylab("read counts")
-sumflophigh <- ggplot(data.high.df, aes(x=rich$Shannon, y=samplesum, size = Sphingomonas, color=subtype))  + geom_point(alpha=0.7) + ggtitle(
+sumflophigh <- ggplot(data.high.df, aes(x=Shannon, y=samplesum, size = Sphingomonas, color=subtype))  + geom_point(alpha=0.7) + ggtitle(
   "data.high (LT removal)"  ) + ylim(0, 75000) + xlim(0, 5) + geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) + ylab("read counts")
 
 
-data.high.remainingsamples <- ggplot(data.high.df, aes(x=rich$Shannon, y=samplesum, color=host_genus))  +
+data.high.remainingsamples <- ggplot(data.high.df, aes(x=Shannon, y=samplesum, color=host_genus))  +
   geom_point(alpha=0.7)  + ylim(0, 10000) + xlim(0, 5) +
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +
   facet_wrap(~host_subfamily) + ggtitle("data.high") +
   geom_label(aes(label = sampleID), size = 4)
 
-sampling.depth.per.genus <- ggplot(data.high.df, aes(x = fct_reorder(host_genus, -samplesum, .fun = median, na.rm = TRUE), y = samplesum)) +
-  geom_boxplot() +
-  geom_point(aes(color = host_subfamily), alpha = 0.5) +
+sampling.depth.per.genus <- ggplot(data.high.df, aes(x = fct_reorder(host_genus, -samplesum, .fun = median, na.rm = TRUE), y = samplesum, fill = host_subfamily)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  geom_point(shape = 21, alpha = 0.7,size = 2) +
   theme_line2()  + theme(axis.text.x = element_text(angle = 60, hjust = 1) ) +  labs(x="",y="sampling depth", title ="sampling depth per genus")
-
 
 # Create a dataframe with sample sums and metadata
 data.low.df <- data.frame(
   SampleSums = sample_sums(data.low),
   host_genus = sample_data(data.low)$host_genus,
-  type = sample_data(data.low)$type
-    )
+  type = sample_data(data.low)$type )
 
 # Sort the dataframe by SampleSums in decreasing order
 sorted_data.low <- data.low.df[order(-data.low.df$SampleSums), ]
@@ -1676,6 +1654,9 @@ sampling.depth.per.genus
 data.low.comp 
 data.high.low.comp
 dev.off()
+
+rm(data.high.low.comp)
+rm(data.high.rel)
 
 ## sample.species (tax_glom genus)
 ## Multiple ASVs might represent the same bacterial genus, here they are collated 
@@ -1789,26 +1770,20 @@ sink()
 # sapply(ls(), function(x) object.size(get(x))) %>% sort(decreasing = TRUE)
 # Print size of ps objects
 print(object.size(data.comp.subset), units = "auto")
-print(object.size(sample.comp), units = "auto")
-print(object.size(data.bacteria.rel), units = "auto")
 print(object.size(data.bacteria), units = "auto")
-print(object.size(data.fixed.rel), units = "auto")
-print(object.size(sample.fixed), units = "auto")
-print(object.size(prevfilter.removed ), units = "auto")
-print(object.size(prevcheck.removed ), units = "auto")
+print(object.size(prevfilter.removed), units = "auto")
 
 # Clean pipeline delete large ps objects not needed anymore
 rm(data.comp.subset)
-rm(sample.comp)
-rm(data.bacteria.rel)
 rm(data.bacteria)
-rm(data.fixed.rel)
-rm(sample.fixed)
+rm(cyano.removed.subset)
 rm(prevfilter.removed)
-rm(prevcheck.removed)
-rm(data.prevfilter.rel)
-rm(data.pruned2.rel)
-rm(data.pruned2.pa)
+#rm(data.prevfilter)
+rm(data.pruned)
+rm(data.decontam.rel)
+rm(sample.removed.melt)
+rm(sample.filter.bar)
+rm(sample.filter.lowrank)
 gc()
 
 # Export sample metadata as csv file
@@ -1877,7 +1852,7 @@ country_colorfix <- setNames(brewer.pal(n = 8, "Dark2")[1:country_count], countr
 taxaPalette = colorRampPalette(brewer.pal(12, "Paired")) # main palette for core taxa
 noncorePalette = colorRampPalette(brewer.pal(8, "Set1")) # secondary palette for non core taxa
 orderPalette = colorRampPalette(brewer.pal(11, "Paired")) # main palette for order
-
+# orderCount  <- length(unique(tax_table(sample.species)[, "order"])) # for coloring possible to get taxon count from ps object
 
 ## 01 sample comp all overview -------------------
 
@@ -1995,12 +1970,9 @@ table(sample_data(sample.species)$country)
 table(sample_data(sample.species)$location)
 sink()
 
-
-
-
 ## 01 sample comp all rel abundance  -------------------
 
-### Rel abundance all samples 
+### Rel abundance all samples (top 20 genera)
 top_taxa_desc <- sort(rowMeans(otu_table(sample.species.rel)), decreasing = TRUE)[1:20]
 
 relabundance <- ggplot(data.frame(genus = names(top_taxa_desc), mean_abundance = top_taxa_desc),
@@ -2010,6 +1982,26 @@ relabundance <- ggplot(data.frame(genus = names(top_taxa_desc), mean_abundance =
   scale_y_continuous(labels = scales::percent) +
   labs(x = "", y = "rel. ab [%]") +
   theme_line2()
+
+# Rel abundance top genera, but color by order
+top.taxa <- names(sort(taxa_sums(sample.species.rel), decreasing = TRUE))[1:30]
+
+# Aggregate mean relative abundance to get rel abundance across all samples
+sample.top.taxa <- psmelt(sample.species.rel) %>%
+  filter(OTU %in% top.taxa) %>%
+  group_by(genus, family, order) %>%
+  summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = "drop")
+
+orderCount = length(unique(sample.top.taxa$order))
+
+relabundance.color.order <- ggplot(sample.top.taxa, aes(x = mean_abundance, y = genus, fill = order)) +
+  facet_grid(order ~ ., scales = "free_y", space = "free") +
+  geom_bar(stat="identity")+
+  theme(strip.text.y.left = element_text(angle = 0))+
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),axis.title.x = element_text(family = "sans", size = 15)) + 
+  scale_fill_manual(values = orderPalette(orderCount)) +
+  scale_x_continuous(labels = scales::percent) +
+  theme_grid() +  labs(x = "rel. ab.", y = "") 
 
 
 #### Top order + fam >1% mirrored  
@@ -2037,27 +2029,24 @@ top.order.family <- prune_taxa(tax_table(top_order_genera)[, "family"] %in% top_
 percent_top_fam <- sum(sample_sums(top.order.family))*100/nsamples(top.order.family)
 percent_top_fam # 86.72571 % top 8 order >1% family
 
-# count for coloring
-top_order_genera.melt <- psmelt(top.order.family)
-orderCount = length(unique(top_order_genera.melt$order))
-familyCount = length(unique(top_order_genera.melt$family))
-
-# order by Top.order 
-order_palette <- setNames(orderPalette(orderCount), Top.order)  # Assign colors in the abundance order
-top_order_genera.melt$order <- factor(top_order_genera.melt$order, levels = Top.order) # order names by order
 
 # normalize by country for rel ab
-top_order_genera.melt.norm <- top_order_genera.melt %>%
+sample.top.tornado <- psmelt(top.order.family) %>%
   group_by(country) %>%
-  mutate(Abundance = Abundance / sum(Abundance, na.rm = TRUE)) %>%
+  mutate(Abundance = Abundance / sum(Abundance, na.rm = TRUE)) %>%  # normalize within country
+  group_by(country, order, family, genus) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop") %>%       # aggregate
+  mutate(Abundance_mirrored = ifelse(country == "Peru", Abundance, -Abundance)) %>%
   ungroup()
 
-sum(top_order_genera.melt.norm$Abundance) # should equal group number
+sum(sample.top.tornado$Abundance) # check: should equal group number (country)
 
-sample.top.tornado <- top_order_genera.melt.norm %>%
-  group_by(country, order, family, genus) %>%
-  summarise(Abundance = sum(Abundance), .groups = "drop") %>%
-  mutate(Abundance_mirrored = ifelse(country == "Peru", Abundance, -Abundance))
+# Define color palette in Top.order abundance order
+orderCount = length(unique(sample.top.tornado$order))
+order_palette <- setNames(orderPalette(orderCount), Top.order)
+
+# Make sure 'order' in the tornado data is a factor with the correct level order
+sample.top.tornado$order <- factor(sample.top.tornado$order, levels = Top.order)
 
 # Tornado top order / family min 1% rel abundance
 order.fam.country.mirrored <- ggplot(sample.top.tornado , aes(family, Abundance_mirrored, fill= order)) +
@@ -2069,14 +2058,9 @@ order.fam.country.mirrored <- ggplot(sample.top.tornado , aes(family, Abundance_
   scale_y_continuous(labels = function(x) scales::percent(abs(x))) + # show % as positive
   scale_fill_manual(values = order_palette) +
   coord_flip() + labs(y = "rel. ab. [%]")   
-  
-top_order_genera_agg <- top_order_genera.melt.norm %>%
-  group_by(country, order, family, genus) %>%
-  summarise(Abundance = sum(Abundance), .groups = "drop") %>%
-  mutate(Abundance_mirrored = ifelse(country == "Peru", Abundance, -Abundance))
 
 # Tornado top order / family min 1% rel abundance / division by genus
-order.fam.country.mirrored.genus <- ggplot(top_order_genera_agg, 
+order.fam.country.mirrored.genus <- ggplot(sample.top.tornado, 
        aes(x = family, y = Abundance_mirrored, fill = order, group = genus)) +
   facet_grid(order ~ country, space = "free", scales = "free", switch = "y") +
   geom_bar(stat = "identity", colour = "black", linewidth = 0.3) +
@@ -2088,30 +2072,6 @@ order.fam.country.mirrored.genus <- ggplot(top_order_genera_agg,
   labs(y = "rel. ab. [%]") +
   scale_fill_manual(values = order_palette) 
   
-
-# Total abundance of top order / families
-top_order_total_stats <- top_order_genera.melt %>%
-  group_by(Sample) %>%
-  summarise(total_abundance = sum(Abundance)) %>%
-  summarise(
-    mean_total_abundance = mean(total_abundance)*100,
-    sd_total_abundance = sd(total_abundance)*100  )
-
-top_order_total_stats # 86.7 
-# crosscheck with previous calculated value
-percent_top_fam       # 86.725
-
-# taxa summary bacterial order (but here low abundant <1% families are missing)
-top_order_family_stats <- top_order_genera.melt %>%
-  group_by(order, Sample) %>%                      # keep Order grouping
-  summarise(order_abundance = sum(Abundance), .groups = "drop") %>%
-  group_by(order) %>%                              # then summarise per order
-  summarise(
-    mean_abundance = mean(order_abundance),
-    sd_abundance = sd(order_abundance)
-  )
-
-top_order_family_stats # values lower than 
 
 # taxa summary bacterial order for all samples
 all_sample_order_stats <- as.data.frame(t(otu_table(sample.order.rel))) %>%
@@ -2154,14 +2114,11 @@ sink()
 
 pdf(file.path(out_dir, "01_sample_comp_all_rel_abundance.pdf"), width=12, height=6)
 relabundance
+relabundance.color.order
 order.fam.country.mirrored 
 order.fam.country.mirrored.genus
 dev.off()
 
-# Cleanup pipeline
-rm(top_order_genera.melt)
-rm(top_order_genera.melt.norm)
-rm(sample.top.tornado)
 
 # 01 sample comp merged group barplot -------------
 
@@ -3139,7 +3096,7 @@ dev.off()
 
 rm(single.sample.noncore.abundance)
 rm(noncore.samples.df)
-
+rm(noncore.genus.df)
 
 ## 02 sample div alpha Shannon --------------
  
@@ -3230,6 +3187,7 @@ alphaframe <- df.sample %>%
   left_join(df.alpha, by = "Sample")
 
 alphaframe$hill_numbers <- exp(alphaframe$Shannon)
+alphaframe$Simpson_E <- alphaframe$InvSimpson /  alphaframe$Observed
 alphaframe$time <- alphaframe$kw
 alphaframe$temperature <- alphaframe$temp_week
 alphaframe$host_subfamily_ordered <- factor(alphaframe$host_subfamily, levels = subfamily_ordered)
@@ -3254,7 +3212,24 @@ pairs(alphaframe[, c("Shannon",  "Observed", "InvSimpson", "temperature",  "time
 alphaframe.noAglais <- subset(alphaframe , host_genus != "Aglais")
 alphaframe.Aglais <- subset(alphaframe , host_genus == "Aglais")
 
-# alpha figures
+alphaframe_long <- alphaframe %>%
+  pivot_longer(
+    cols = c("Shannon", "Observed", "InvSimpson", "Simpson_E"),
+    names_to = "Index",
+    values_to = "Value" )
+
+# alphaframe_long figure
+alpha.overview <- ggplot(alphaframe_long, aes(x = host_subfamily_ordered, y = Value)) +
+  geom_boxplot(aes(group = host_subfamily)) +
+  geom_point(position = position_jitter(w = 0.1, h = 0), size = 4, aes(color = host_subfamily, shape = country), alpha = 0.8 ) +
+  facet_wrap(~Index, scales = "free_y") +
+  theme_line2() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_colour_manual(values = subfamily_colorfix) +
+  labs(x = "", y = "Diversity Index", color = "host subfamily", shape = "country" ) +
+  guides(color = guide_legend(order = 1), shape = guide_legend(order = 2) ) 
+  
+
+# alphaframe figures
 alpha.shannon  <- ggplot(alphaframe, aes(x=host_subfamily_ordered, y=Shannon)) +
   geom_boxplot(aes(group = host_subfamily))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
@@ -3368,6 +3343,7 @@ alpha.location.tribe  <- ggplot(alphaframe, aes(x=location, y=Shannon)) +
 
 
 pdf(file.path(out_dir, "02_sample_div_alphaframe_groups.pdf"), width=12, height=6)
+alpha.overview
 alpha.shannon
 alpha.rich
 alpha.rich.tribe
@@ -4514,12 +4490,6 @@ betaframe$beta_sublocation <- beta_sublocation$distances[match(betaframe$Sample,
 betaframe$host_subfamily_ordered <- factor(betaframe$host_subfamily, levels = subfamily_ordered)
 betaframe$temperature <- betaframe$temp_week
 
-# Simple base R plot
-plot(betadisper(sample.vegdist, group = betaframe$host_subfamily))
-plot(betadisper(sample.vegdist, group = betaframe$location))
-plot(betadisper(sample.vegdist, group = betaframe$country))
-
-
 # Betadisper family level
 betadisp.family <- ggplot(betaframe, aes(x=host_family, y=beta_family))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_subfamily),alpha = 0.8) +
@@ -5105,6 +5075,7 @@ dev.off()
 
 # Cleanup pipeline 
 rm(sample.ASV.core.top.melt)
+rm(ASV.bubble.country)
 
 sink(file.path(out_dir, "03_sample_taxa_abundance_core_ASV.txt"))
 "Kruskal.test core genus per subfamily"
@@ -5375,8 +5346,6 @@ taxonomy_df$log_ab <- log10(total_abundance)
 
 head(taxonomy_df)
 
-
-
 sink(file.path(out_dir, "05_ggtree_layers.txt"))
 taxonomy_df
 sink()
@@ -5569,6 +5538,15 @@ square.annotation
 dev.off()
 
 
+# Cleanup pipeline to optimize .RData file size
+rm(Pierinae)
+rm(Coliadinae)
+rm(Heliconiinae)
+rm(Satyrinae)
+rm(Nymphalinae)
+rm(Dismorphiinae)
+rm(Dismorph_Nymph)
+
 ## 06 Country Color Chord Alluvial  --------------
 
 # Network Chord diagramm country vs core taxa
@@ -5748,7 +5726,7 @@ fig5.net.core.comp <-
 s1.plot_alpha.country <- (alpha.shannon.tribe.sort + theme(legend.position = "none"))+ 
   (alpha.shannon.country  + theme(legend.position = "none") ) +
   (alpha.subfamily.country  + theme(legend.position = "right") ) +
-  plot_layout(ncol = 3, widths = c(2, 1,2)) &  # , guides = "collect"
+  plot_layout(ncol = 3, widths = c(2, 1, 1.8)) &  # , guides = "collect" #  c(2, 1, 2)
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0),
         plot.tag.position = c(0.01, 0.98),
@@ -5775,12 +5753,12 @@ s2.plot_alpha.elevation <- (
 
 # supplement S3 PCoA genus tribe
 s3.betadisp.tribe.wrap2 <- ggarrange(betadisp.genus, PCoA.genus.wrap.tribe_noleg, marginalR2.plot,   labels = c('a', 'b', 'c'),
-                                     common.legend = F, ncol = 3,   nrow = 1, align = "h", widths = c(1,1.2,0.4) ) # , legend = "right"
+                                     common.legend = F, ncol = 3,   nrow = 1, align = "h", widths = c(1,1,0.3) ) # , legend = "right"  c(1,1.2,0.4)
 
 
 
 # Venn core definition 3 area subplots A/B|C
-pA <- genus.core.maxprev + theme(legend.position = "right")
+pA <- genus.core.maxprev + theme(legend.position = "bottom")
 pB <- venn_core_overlap + theme(legend.position = "none")
 
 pD <- noncore.genus.abundance + 
@@ -5798,13 +5776,13 @@ right_col <- (core.genus.abundance | pD) +
 
 # supplement S4 patch_venn_core_noncore_plot
 s4.patch_venn_core_noncore_plot <- (left_col | right_col) +
-  plot_layout(widths = c(0.7,1.2)) +
+  plot_layout(widths = c(0.8,1.2)) +
   plot_annotation(tag_levels = "a") &
   theme(
     plot.tag = element_text(face = "bold", size = 14, hjust = 0),
     #plot.tag.position = c(0.02, 0.98),
     #plot.margin = margin(3, 1, 3, 1),
-    legend.key.size = unit(0.8, "lines"),      # key box size legend
+    #legend.key.size = unit(0.8, "lines"),      # key box size legend
   )
 
 
@@ -5847,11 +5825,10 @@ ggsave(file.path(out_dir, "Fig4.pdf"), plot = fan.core.annotation, width = 20, h
 ggsave(file.path(out_dir, "Fig5.png"), plot = fig5.net.core.comp, width = 30, height = 10, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "Fig5.pdf"), plot = fig5.net.core.comp, width = 30, height = 10, units = "cm", dpi = 300)
 
-
 ### ggsave Supplemental Figures -----
 
-ggsave(file.path(out_dir, "FigS1_alpha.country.png"), plot = s1.plot_alpha.country , width = 24, height = 14, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS1_alpha.country.pdf"), plot = s1.plot_alpha.country , width = 24, height = 14, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS1_alpha.country.png"), plot = s1.plot_alpha.country , width = 26, height = 15, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS1_alpha.country.pdf"), plot = s1.plot_alpha.country , width = 26, height = 15, units = "cm", dpi = 300)
 
 ggsave(file.path(out_dir, "FigS2_alphaelevation.png"), plot = s2.plot_alpha.elevation , width = 24, height = 20, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "FigS2_alphaelevation.pdf"), plot = s2.plot_alpha.elevation , width = 24, height = 20, units = "cm", dpi = 300)
@@ -5859,39 +5836,27 @@ ggsave(file.path(out_dir, "FigS2_alphaelevation.pdf"), plot = s2.plot_alpha.elev
 ggsave(file.path(out_dir, "FigS3_beta_genus.png"), plot = s3.betadisp.tribe.wrap2 , width = 30, height = 13, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "FigS3_beta_genus.pdf"), plot = s3.betadisp.tribe.wrap2 , width = 30, height = 13, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS4_corevenn_alternative.png"), plot = s4.patch_venn_core_noncore_plot , width = 34, height = 22, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS4_corevenn_alternative.pdf"), plot = s4.patch_venn_core_noncore_plot , width = 34, height = 22, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS4_corevenn_alternative.png"), plot = s4.patch_venn_core_noncore_plot , width = 32, height = 28, units = "cm", dpi = 300) # width = 34, height = 22,
+ggsave(file.path(out_dir, "FigS4_corevenn_alternative.pdf"), plot = s4.patch_venn_core_noncore_plot , width = 32, height = 28, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS5_core_square.png"), plot = square.annotation , width = 25, height = 25, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS5_core_square.pdf"), plot = square.annotation , width = 25, height = 25, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS5_core_square.png"), plot = square.annotation , width = 24, height = 24, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS5_core_square.pdf"), plot = square.annotation , width = 24, height = 24, units = "cm", dpi = 300)
 
 ggsave(file.path(out_dir, "FigS6_country_core.png"), plot = core_stripchart.country.stats, width = 24, height = 15, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "FigS6_country_core.pdf"), plot = core_stripchart.country.stats, width = 24, height = 15, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS7_bubble.country.png"), plot = ASV.bubble.core.country , width = 25, height = 30, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS7_bubble.country.pdf"), plot = ASV.bubble.core.country , width = 25, height = 30, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS7_bubble.country.png"), plot = ASV.bubble.core.country , width = 24, height = 28, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS7_bubble.country.pdf"), plot = ASV.bubble.core.country , width = 24, height = 28, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS8_endo.png"), plot = s8.endosymbiont.arrange , width = 25, height = 12, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS8_endo.pdf"), plot = s8.endosymbiont.arrange , width = 25, height = 12, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS8_endo.png"), plot = s8.endosymbiont.arrange , width = 24, height = 15, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS8_endo.pdf"), plot = s8.endosymbiont.arrange , width = 24, height = 15, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS9_corestrip.png"), plot = s9.stripchart.arrange , width = 24, height = 12, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS9_corestrip.pdf"), plot = s9.stripchart.arrange , width = 24, height = 12, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS9_corestrip.png"), plot = s9.stripchart.arrange , width = 24, height = 15, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS9_corestrip.pdf"), plot = s9.stripchart.arrange , width = 24, height = 15, units = "cm", dpi = 300)
 
 ggsave(file.path(out_dir, "FigSx_core-fam_genus.png"), plot = fam.core.abundance2, width = 35, height = 15, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "FigSx_core-fam_genus.pdf"), plot = fam.core.abundance2, width = 35, height = 15, units = "cm", dpi = 300)
 
-
-# Cleanup pipeline to optimize .RData file size
-rm(ASV.bubble.core.country)
-rm(ASV.bubble.country)
-rm(patch_venn_core_noncore_plot)
-rm(Pierinae)
-rm(Coliadinae)
-rm(Heliconiinae)
-rm(Satyrinae)
-rm(Nymphalinae)
-rm(Dismorphiinae)
-rm(Dismorph_Nymph)
 
 # optional: Run extended workflow for extra figures
 if (file.exists("R_16S_AW_extension.R")) {
