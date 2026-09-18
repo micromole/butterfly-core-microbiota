@@ -8,7 +8,7 @@ This repository provides the full processing pipeline for microbiome analysis ba
 
 ## How to
 * Download all files of this repository
-* Load ```R_16S_AW_Butterfly_pipeline_v01.R``` into R
+* Load ```R_16S_AW_Butterfly_pipeline_v02_Revision.R``` into R
 * Install libraries and adapt path of working directory ```setwd("../butterfly-core-microbiota") ```
 * Run pipeline in R
 
@@ -25,12 +25,10 @@ This repository provides the full processing pipeline for microbiome analysis ba
 03_sample_taxa ASV abundance
 05_ggtree core tree analysis
 06_alluvial network alluvial plot
-07_final figures
+07_Hym_Lep bee data import
+08_final figures
 ```
 
 ## Supplementary Information
 * Run ```Supplementary_information.tex``` in Latex to create the supplementary information as pdf file
 
-## Alternative input
-* Process Illumina data according to https://github.com/chiras/metabarcoding_pipeline/
-* Merge Taxonomy, Community table and Metadata into ```data.comp```
