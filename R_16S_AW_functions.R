@@ -61,36 +61,29 @@ propagate_incomplete_taxonomy <- function(phyloseq){
 }
 
 ## function "calc_prevalence" for prevalence abundance plots
-calc_prevalence<- function(ps, rank = "Phylum") {
+calc_prevalence <- function(ps, tax_rank = "phylum") {
   
-  # Calculate prevalence per taxon
+  # 1. Prevalence per taxon
   prev <- apply(
     X = otu_table(ps),
-    MARGIN = ifelse(taxa_are_rows(ps), 1, 2),
+    MARGIN = if (taxa_are_rows(ps)) 1 else 2,
     FUN = function(x) sum(x > 0)
   )
   
-  # Combine with taxonomy and abundance
+  # 2. Build dataframe (ASV level)
   prevdf <- data.frame(
     Prevalence = prev,
     TotalAbundance = taxa_sums(ps),
-    tax_table(ps)
+    as.data.frame(tax_table(ps))
   )
   
-  # Summarize by taxonomic rank
-  rank_summary <- plyr::ddply(
+  # 3. Subset to taxa present
+  prevdf_filtered <- subset(
     prevdf,
-    rank,
-    function(df) cbind(
-      MeanPrevalence = mean(df$Prevalence),
-      SumPrevalence = sum(df$Prevalence)
-    )
+    prevdf[[tax_rank]] %in% get_taxa_unique(ps, tax_rank)
   )
   
-  return(list(
-    taxa_table = prevdf,
-    rank_summary = rank_summary
-  ))
+  return(prevdf_filtered)
 }
 
 
@@ -125,12 +118,36 @@ plate_frame <- function(ps) {
     theme_minimal()
 }
 
+# get partial R2 (variance partitioning for lm model on Type II ANOVA)
+get_partial_R2 <- function(model) {
+  anovaII <- Anova(model, type = 2)
+  ss_res <- sum(residuals(model)^2)
+  partial_R2 <- anovaII$`Sum Sq` / 
+    (anovaII$`Sum Sq` + ss_res)
+  
+  data.frame(
+    term = rownames(anovaII),
+    Df = anovaII$Df,
+    F = anovaII$`F value`,
+    p = anovaII$`Pr(>F)`,
+    partial_R2 = partial_R2,
+    row.names = NULL   )
+}
+
+
+
 # Run kruskal.test output as table: run_kruskal(core.melt, "host_subfamily")
 run_kruskal <- function(data, group_var) {
   data %>%
     group_by(genus) %>%
     summarise(
-      test = list(kruskal.test(reformulate(group_var, "Abundance")))
+      test = list(kruskal.test(reformulate(group_var, "Abundance"))),
+      highest_in = names(which.max(tapply(
+        rank(Abundance),
+        .data[[group_var]],
+        mean,
+        na.rm = TRUE
+      )))
     ) %>%
     mutate(
       statistic = sapply(test, \(x) x$statistic),
@@ -141,8 +158,8 @@ run_kruskal <- function(data, group_var) {
     select(-test) %>%
     mutate(
       statistic = round(statistic, 3),
-      p_value = sprintf("%.3f", p_value),
-      p_adj   = sprintf("%.3f", p_adj),
+      #p_value = sprintf("%.3f", p_value),
+      #p_adj   = sprintf("%.3f", p_adj),
       signif = case_when(
         p_adj < 0.001 ~ "***",
         p_adj < 0.01  ~ "**",
