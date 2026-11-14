@@ -3,9 +3,8 @@ Butterfly Core Microbiota 16S Metabarcoding Pipeline
 by Arne Weinhold (LMU Munich) arne.weinhold@bio.lmu.de
 
 ## What it is
-This repository provides the full processing pipeline for microbiome analysis based on 16S Illumina sequencing data. It contains all code required to reproduce the analyses, figures and statistics presented in:
-> Weinhold A*, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: **Host-structured adult butterfly microbiomes share a common core across continents**
-, bioRxiv https://doi.org/10.64898/2026.02.27.708436
+This repository provides the full processing pipeline for microbiome analysis based on 16S Illumina sequencing data. It contains all data and code required to reproduce sample processing, statistical analysis and figures presented in:
+> Weinhold A, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: **Host-structured adult butterfly microbiomes share a common core across continents**, accepted at Nature Communications (bioRxiv https://doi.org/10.64898/2026.02.27.708436)
 
 ## How to
 * Download all files of this repository
@@ -15,9 +14,10 @@ This repository provides the full processing pipeline for microbiome analysis ba
 
 ## What it does
 * Loads additional functions ```R_16S_AW_functions.R```
-* Imports sample data into ps object ```data.comp```
+* Imports sample ```data``` into ps object ```data.comp```
 * Creates output directory for *.pdf files
-* Run time approx 15 min on a desktop Computer
+* Saves intermediate and final figure into output directory 
+* Run time <15 min on a standard desktop computer
 
 ## Output files
 ```
