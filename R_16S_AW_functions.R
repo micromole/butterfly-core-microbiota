@@ -168,3 +168,25 @@ run_kruskal <- function(data, group_var) {
       )
     )
 }
+
+# Single sample check
+# Usage
+# single.sample.check(ps_object)
+# single.sample.check(ps_object, "Sample_Name")
+# single.sample.check(ps_object, "Sample_Name", n = 20, rank = "family")
+
+single.sample.check <- function(physeq, sample_id = NULL, n = 10, rank = "genus") {
+  if (!is.null(sample_id)) {
+    physeq <- prune_samples(sample_names(physeq) == sample_id, physeq)
+  }
+  physeq <- prune_taxa(taxa_sums(physeq) > 0, physeq)
+  top_taxa <- sort(taxa_sums(physeq), decreasing = TRUE)[1:min(n, ntaxa(physeq))]
+  
+  data.frame(
+    ASV      = names(top_taxa),
+    taxon    = as.character(tax_table(physeq)[names(top_taxa), rank]),
+    taxa_sum = unname(top_taxa),
+    percent_of_sample = round(unname(top_taxa) / sum(taxa_sums(physeq))* 100, 2),
+    row.names = NULL
+  )
+}

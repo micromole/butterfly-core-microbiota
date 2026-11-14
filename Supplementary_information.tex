@@ -12,7 +12,7 @@
   footsepline=0.5pt
 ]{scrlayer-scrpage}
 
-% First run R_16S_AW_Butterfly_pipeline_v01.R to create figures, then run Supplementary_Information.tex 
+% First run R_16S_AW_Butterfly_pipeline_v02_Revision.R to create figures, then run Supplementary_Information.tex 
 
 \usepackage[
 paper=a4paper,
@@ -84,10 +84,10 @@ pdfpagelayout=SinglePage
 	\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS1_alpha.country.pdf} 
 	\caption{\textbf{Bacterial load and diversity across butterfly host taxa and countries.}
 		\newline
-		(\textbf{a}) Total bacterial load estimated by 16S rRNA gene copy number qPCR per butterfly genus. (\textbf{b}) Bacterial load did not differ between countries in individual subfamilies. Wilcoxon rank-sum tests: Coliadinae ($p = 0.051$), Dismorphiinae ($p = 0.33$) and Pierinae ($p = 0.81$). 
+		(\textbf{a}) Total bacterial load estimated by 16S rRNA gene copy number qPCR per butterfly genus. Sample sizes (n) are shown above each genus name. (\textbf{b}) Bacterial load did not differ between countries in individual subfamilies. Wilcoxon rank-sum tests: Coliadinae ($p = 0.051$), Dismorphiinae ($p = 0.33$) and Pierinae ($p = 0.81$).
 		(\textbf{c}) Shannon Index grouped by host tribe and colored by host subfamily. The full model explained 30\%{} of variation in Shannon diversity, with the main effect accounted to host tribe
-		($R^2_{\mathrm{partial}} = 0.24,\; F_{11,154} = 4.3,\; p < 10^{-4}$), there was no effect of country ($R^2_{\mathrm{partial}} < 0.01,\; F_{1,154} = 0.03,\; p = 0.87$). 
-		(\textbf{d}) Shannon Index did not differ by country in individual Wilcoxon rank-sum tests: Coliadinae ($p = 0.12$), Dismorphiinae ($p = 0.33$) and Pierinae ($p = 0.62$).}
+		($R^2_{\mathrm{partial}} = 0.24,\; F_{11,154} = 4.3,\; p = 0.001$), there was no effect of country ($R^2_{\mathrm{partial}} < 0.01,\; F_{1,154} = 0.03,\; p = 0.87$). 
+		(\textbf{d}) Shannon Index did not differ by country in individual Wilcoxon rank-sum tests: Coliadinae ($p = 0.12$), Dismorphiinae ($p = 0.33$) and Pierinae ($p = 0.62$). Box plots show the median and interquartile range (25\textsuperscript{th}--75\textsuperscript{th} percentiles); whiskers extend to the most extreme observations within 1.5 × IQR. Each data point represents an individual specimen. Sample sizes (n) are indicated for each group. Wilcoxon rank-sum tests were two-sided, and $p$ values were unadjusted. }
 \end{figure} 
 \clearpage
 % -----------------------------
@@ -98,10 +98,10 @@ pdfpagelayout=SinglePage
 \includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS2_alphaelevation.pdf} 
 \caption{\textbf{Influence of environmental gradients on adult butterfly microbiota diversity.}
 	\newline
-(\textbf{a}) Alpha diversity (only Peru samples) shows linear decrease with elevation (meters above sea level). 
+(\textbf{a}) Alpha diversity (only Peru samples) shows linear decrease with elevation (meters above sea level). Black line shows the linear fit with 95\%{} confidence interval in gray. 
 (\textbf{b}) Alpha diversity (only Germany samples) shows linear increase by calendar week.
 \textit{Aglais} were removed from diversity analyses, due to their low microbial abundance, but illustrated as outgroup with in the figure. 
-(\textbf{c}) Temperature did not significantly affect bacterial load after accounting for host subfamily. 
+(\textbf{c}) Temperature did not significantly affect bacterial load after accounting for host subfamily. Black line shows a quadratic fit with 95\%{} confidence interval in gray. 
 (\textbf{d}) For observed microbial richness, both host subfamily and temperature were significant, with host subfamily having the stronger effect ($R^2_{\mathrm{partial}} = 0.27, F_{6,151} = 9.42, p < 10^{-8}$), while temperature had a smaller but significant effect ($R^2_{\mathrm{partial}} = 0.03, F_{1,151} = 4.63, p = 0.033$).
 (\textbf{e}) For Shannon diversity, the effect was attributable to host subfamily, whereas temperature was not significant. 
 (\textbf{f}) For inverse Simpson diversity, host subfamily had the stronger effect ($R^2_{\mathrm{partial}} = 0.14, F_{6,151} = 3.97, p = 0.001$), while temperature was still significant ($R^2_{\mathrm{partial}} = 0.03, F_{1,151} = 4.32, p = 0.039$).}
@@ -115,8 +115,8 @@ pdfpagelayout=SinglePage
 \includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS3_beta_genus.pdf}
 \caption{\textbf{Adult butterfly microbiome dissimilarity and dispersion across host genera.}
 	\newline
-(\textbf{a}) Beta diversity of the adult butterfly microbiota using PCoA based on Bray-Curtis distances. Samples are colored by host tribe and panels faceted by host genus (unique genera with less than two replicates were excluded).
-(\textbf{b}) Microbiota of adult butterfly genera differs in beta dispersion (colored by host tribe).}
+(\textbf{a}) Beta diversity of the adult butterfly microbiota using PCoA based on Bray-Curtis distances. Samples are colored by host tribe and panels faceted by host genus (unique genera with less than two replicates were excluded). Sample sizes (n) are indicated in each genus panel. 
+(\textbf{b}) Microbiota of adult butterfly genera differs in beta dispersion (colored by host tribe). Box plots show the median and interquartile range (25\textsuperscript{th}--75\textsuperscript{th} percentiles); whiskers extend to the most extreme observations within 1.5 × IQR.}
 \end{figure} 
 \clearpage
 % -----------------------------
@@ -151,7 +151,7 @@ pdfpagelayout=SinglePage
 \includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS6_core_square.pdf}
 \caption{\textbf{Full genus-level annotation, prevalence and abundance of the adult butterfly microbiota.}
 	\newline
-Phylogenetic grouping (SINA RAxML tree) and relative abundance of the 80 most abundant bacterial genera from adult butterflies. Expansion of Figure 4 including all bacterial genus names. Prevalence in wild bee microbiomes from sympatric Apinae and Halictinae is shown for comparison. Black dots indicate common core genera identified from the bee dataset.}
+Phylogenetic grouping (SINA RAxML tree) and relative abundance of the 80 most abundant bacterial genera from adult butterflies. Expansion of Figure 4 including all bacterial genus names. Prevalence in wild bee microbiomes from sympatric Apinae and Halictinae is shown for comparison. Black dots indicate common core genera identified from the sympatric wild bee dataset.}
 \end{figure} 
 \clearpage
 % -----------------------------
@@ -159,12 +159,12 @@ Phylogenetic grouping (SINA RAxML tree) and relative abundance of the 80 most ab
 \pdfbookmark[1]{Figure S7 -- Comparison of the common genus core microbiota of Lepidoptera and Hymenoptera}{fig:S7}
 \noindent
 \begin{figure}[H]
-	\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS7_Hym_Lep_core_stripchart.png}
+	\includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS7_Hym_Lep_core_stripchart.pdf}
 	\caption{\textbf{Comparison of the common genus core microbiota of Lepidoptera and Hymenoptera}.
 		\newline
 	(\textbf{a}) Six genera are unique to the common core of Lepidoptera. 
 	(\textbf{b}) Six genera show taxonomic overlap between the common cores of Lepidoptera and Hymenoptera. 
-	(\textbf{c}) Nine genera are unique to the common core of Hymenoptera. Using the same operational common core definition for Lepidoptera and Hymenoptera should facilitate comparability between datasets but does not necessarily represent an optimized threshold for the Hymenoptera dataset, nor is it intended to specifically identify socially transmitted taxa. Wilcoxon rank-sum tests with Benjamini–Hochberg correction for multiple comparisons (Lepidoptera n = 167, Hymenoptera n = 872).}
+	(\textbf{c}) Nine genera are unique to the common core of Hymenoptera. Using the same operational common core definition for Lepidoptera and Hymenoptera should facilitate comparability between datasets but does not necessarily represent an optimized threshold for the Hymenoptera dataset, nor is it intended to specifically identify socially transmitted taxa. Wilcoxon rank-sum tests with Benjamini–Hochberg correction for multiple comparisons (Lepidoptera n = 167, Hymenoptera n = 872). Violin plots show the distribution of relative abundances with black bars indicate the mean.}
 \end{figure} 
 \clearpage
 % -----------------------------
@@ -175,7 +175,7 @@ Phylogenetic grouping (SINA RAxML tree) and relative abundance of the 80 most ab
 \includegraphics[width=\textwidth,height=0.85\textheight,keepaspectratio]{FigS8_country_core.pdf}
 \caption{\textbf{Country-specific distribution of common genus core taxa. }
 	\newline
-Relative abundance of individual core genera among countries and results of Wilcoxon rank-sum Tests following Benjamini–Hochberg correction accounting for multiple comparisons (Germany n = 76, Peru n = 91).}
+Relative abundance of individual core genera among countries and results of Wilcoxon rank-sum Tests following Benjamini–Hochberg correction accounting for multiple comparisons (Germany n = 76, Peru n = 91). Violin plots show the distribution of relative abundances with black bars indicate the mean.}
 \end{figure} 
 \clearpage
 % -----------------------------
@@ -209,14 +209,15 @@ Relative abundance of individual core genera among countries and results of Wilc
 \caption{\textbf{Distribution of common genus core taxa among butterfly samples.}
 	\newline
 (\textbf{a}) Total genus core abundance among individual butterfly genera. 
-(\textbf{b}) Distribution of individual genus core taxa across butterfly subfamilies. Symbols depict different sampling countries (Circles for Germany, triangles for Peru).}
+(\textbf{b}) Distribution of individual genus core taxa across butterfly subfamilies. Symbols depict different sampling countries (Circles for Germany, triangles for Peru). Box plots show the median and interquartile range (25\textsuperscript{th}--75\textsuperscript{th} percentiles); whiskers extend to the most extreme observations within 1.5 × IQR.}
 \end{figure} 
 \clearpage
 % -----------------------------
-\noindent
+{\setlength{\parindent}{0pt}
 \pdfbookmark[1]{Table S1 -- Sample metadata}{tab:S1}
-\textbf{Supplementary Table S1} (File: \texttt{Suppl\_table\_sample\_filter\_metadata.csv}) \\[2mm]
+\textbf{Supplementary Table S1: Sample metadata} (File: \texttt{Suppl\_table\_sample\_filter\_metadata.csv}) \\[2mm]
 Sample metadata and removed reads per individual sample (total and percentage) including individual BioProject accession numbers.
+}
 \clearpage
 
 \end{document}

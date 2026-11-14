@@ -1,9 +1,10 @@
 # ------------------------------------------------------------- x
 # Full R pipeline for microbiota metabarcoding analysis
+# available at https://github.com/micromole/butterfly-core-microbiota
 # based on https://github.com/chiras/metabarcoding_pipeline
 # by Alexander Keller (LMU) keller@bio.lmu.de
 #
-# Created: Do 11. Apr 12:31:38 CEST 2024 (modified 14.09.2026)
+# Created: Do 11. Apr 12:31:38 CEST 2024 (last modified 06.11.2026)
 # Project: 16S_AW_Butterfly_Peru
 # Marker: 16S
 # Author: Arne Weinhold (LMU) arne.weinhold@bio.lmu.de
@@ -35,7 +36,7 @@ library(microbiome) # aggregate_taxa plot_core function
 library(decontam)   # remove contamination
 
 # statistics
-library(vegan)
+library(vegan)      # adonis2 and vegdist 
 library(car)        # Type II ANOVA, Levene test, VIF
 library(effectsize) # eta squared
 library(iNEXT)      # coverage-based standardization
@@ -68,13 +69,14 @@ pipeline_start <- Sys.time()
 # sample.filter   # Minor genera removed to simplify phylo tree
 
 # Analysis pipeline:
-# 00 Sample processing filtering
-# 01 Composition Core
-# 02 Alpha and beta diversity
-# 03 Taxa abundance, endosymbionts
-# 05 Phylo tree
-# 06 Alluvial plot
-# 07 Hym/Lep dataset, bee data import
+# 00_data pre-processing and filtering
+# 01_sample taxa composition and core analysis
+# 02_sample_div alpha diversity analysis
+# 03_sample_div beta diversity analysis
+# 04_sample_taxa ASV abundance, endosymbionts
+# 05_ggtree core tree analysis
+# 06_alluvial network alluvial plot
+# 07_Hym_Lep bee data import
 # 08 Final figure export
 
 ###  Load custom themes and functions 
@@ -90,8 +92,8 @@ sink("sessionInfo.txt")
 sessionInfo()
 sink()
 
-## 00 data.comp  -------
-# Build from sequencing data (or re-import from csv export file, goto line 134)
+## 00 data.comp  --------------
+# Build from sequencing data (or re-import from csv export file, goto >> 00 data.comp Re-import)
 ### Loading data: Taxonomy
 # data.tax <- tax_table(as.matrix(read.table("taxonomy.vsearch", header=T,row.names=1,fill=T,sep=",")))
 ## Community table
@@ -132,7 +134,7 @@ sink()
 # data.comp.tax <- as.data.frame(tax_table(data.comp))
 # write.csv(data.comp.tax, file.path(data_dir, "data.comp.tax.csv"), row.names = TRUE)
 
-
+## 00 data.comp Re-import --------------
 # Re-import data.comp from csv export file
 re_otu <- read.csv(file.path(data_dir, "data.comp.otu.csv"), row.names = 1)
 otu_tab <- otu_table(as.matrix(re_otu), taxa_are_rows = T)
@@ -218,17 +220,12 @@ cyano.removed  <- prune_taxa(setdiff(names(taxa_sums(data.comp)), names(taxa_sum
 percentage_removed_cyano_total <- 100 * sum(sample_sums(cyano.removed)) / sum(sample_sums(data.comp))
 percentage_removed_cyano_sample <- 100 * sum(sample_sums(subset_samples(cyano.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.comp, type == "sample")))
 
-percentage_removed_cyano_total  # 0.39%
-percentage_removed_cyano_sample # 0.378%
+cat("Percent of reads removed cyano total:", round(percentage_removed_cyano_total, 2), "%\n")
+cat("Percent of reads removed cyano sample:", round(percentage_removed_cyano_sample, 2), "%\n")
 
 # Show top removed taxa with genus names e.g. to identify d:Bacteria_spc_spc_spc_spc with Blast search
-cyano.taxa.abundance <- data.frame(sort(taxa_sums(cyano.removed), decreasing = TRUE)[1:50])
-cyano.taxa.genus  <- data.frame(
-  genus = as.character(tax_table(cyano.removed)[names(sort(taxa_sums(cyano.removed), decreasing = TRUE)[1:50]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(cyano.removed), decreasing = TRUE)[1:50])
-
-# Show list of removed ASVs
-cyano.taxa.genus
+cyano.taxa.genus <- single.sample.check(cyano.removed, n = 50)
+cyano.taxa.genus # Show list of removed ASVs
 
 # Make dataframe with percent removed Cyano reads per sample
 cyano.removed.frame <- data.frame(
@@ -238,16 +235,14 @@ cyano.removed.frame <- data.frame(
   host_subfamily = sample_data(cyano.removed)$host_subfamily,
   type = sample_data(cyano.removed)$type,
   PCR = sample_data(cyano.removed)$PCR,
-  cyano_percent = (sample_sums(cyano.removed) / sample_sums(data.comp)) * 100)
-# Sort the dataframe in decreasing order
-cyano.removed.frame.sorted <- cyano.removed.frame[order(cyano.removed.frame$cyano), ]
+  cyano_percent = round((sample_sums(cyano.removed) / sample_sums(data.comp)) * 100, 2) ) %>%
+  arrange(cyano)
 
 # Show list of samples and percent cyano removed 
-tail(cyano.removed.frame.sorted, 100)
-
+tail(cyano.removed.frame, 100)
 
 # Mean percentage of cyano removed by genus
-mean_cyanoremoved_by_genus <- cyano.removed.frame.sorted %>%
+mean_cyanoremoved_by_genus <- cyano.removed.frame %>%
   mutate(cyano_percent = as.numeric(cyano_percent)) %>%
   group_by(host_genus) %>%
   summarise(cyano_percent = round(mean(cyano_percent, na.rm = TRUE), 2)) %>% 
@@ -260,12 +255,10 @@ as.data.frame(mean_cyanoremoved_by_genus)
 cyano.removed.p <- tax_glom(cyano.removed,taxrank="phylum") # simplify to higher tax rank to speed up figures (and safe space) 
 cyano.removed.melt <- psmelt(cyano.removed.p)
 
-cyano.removed.lowrank <- ggplot(cyano.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") +
-  coord_flip(xlim = c(0, 60)) + ggtitle("Cyano / plants removed") 
+cyano.removed.lowrank <- ggplot(cyano.removed.melt, aes(x = Abundance, y = reorder(Sample, -Abundance), fill = phylum)) +
+  geom_bar(stat = "identity") + coord_cartesian(ylim = c(0, 60))  +  labs(title = "Cyano / plants removed", x = "reads removed", y = "sample name")
 
-cyano.removed.plot <- ggplot(cyano.removed.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("Cyano / plants removed") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
+cyano.removed.plot <- ggplot(cyano.removed.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(stat = "identity") + ggtitle("Cyano / plants removed") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
 
 # Compare data frames before and after Cyano removal  
 data.bacteria.df <- as(sample_data(data.bacteria),"data.frame")
@@ -292,7 +285,6 @@ cyano.percent.boxplot <- ggplot(data.bacteria.df, aes(x = type, y = percentcyano
 data.bacteria.shannon <- ggplot(data.bacteria.df, aes(x=Shannon, y=samplesums, size = cyanoremoved, color=type, shape=country))  + geom_point(alpha=0.7)  + ggtitle(
   "data.bacteria"  )  +  ylim(0, 75000) + xlim(0, 6)
 
-
 pdf(file.path(out_dir, "00_data_comp_first_view_cyano.pdf"), width=12, height=6)
 first.view.histogram
 first.view.lib
@@ -310,7 +302,7 @@ dev.off()
 rm(first.view.comp)
 rm(second.view.comp)
 
-options(max.print = 4000) 
+options(max.print = 4000, width = 200) 
 sink(file.path(out_dir, "00_data_comp_first_view_cyano.txt"))
 "data.comp"
 data.comp
@@ -327,21 +319,17 @@ table(tax_table(data.bacteria)[, "kingdom"], exclude = NULL)
 table(tax_table(cyano.removed)[, "phylum"], exclude = NULL)
 "cyano taxa removed"
 cyano.taxa.genus 
-"cyano removed per sample sorted"
-tail(cyano.removed.frame.sorted, 50)
+"cyano removed per sample"
+tail(cyano.removed.frame, 50)
 cat("Percent of reads removed cyano total:", round(percentage_removed_cyano_total, 2), "%\n")
 cat("Percent of reads removed cyano sample:", round(percentage_removed_cyano_sample, 2), "%\n")
 "mean_cyanoremoved_by_genus"
 as.data.frame(mean_cyanoremoved_by_genus)
 sink()
 
-### > Single sample check / Taxon Check----------------
+### > Single sample check / Taxon Check
 # Inspect unidentified ASVs in a single sample for manual BLAST and classification
-single.sample.check <- prune_samples(sample_names(data.comp) == "AW.B1.G069_S69", data.comp)  
-sample_sums(single.sample.check) # list total sample sum
-# Show genus names and taxa sums of top 20 ASVs in a sample
-data.frame(genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:50]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:50])
+# single.sample.check(data.comp, "AW.B1.G069_S69") # optional: n = 15, rank = "family"
 
 # Check occurrence of a specific ASV
 tag_ASV <- c("ASV1620") 
@@ -364,9 +352,9 @@ sort(data.frame(sum = taxa_sums(check_taxa)), decreasing = FALSE)
 data.bacteria
 
 # Insepct PCR quality high, med, low
-data.bacteria.p <- tax_filter(data.bacteria, min_prevalence = 2, min_total_abundance = 50, min_sample_abundance = 10) # simplyfy data for figure
-PCR.depth <- data.bacteria.p %>%
+PCR.depth <- data.bacteria %>%
   #ps_filter(type == "sample") %>%
+  prune_taxa(taxa_sums(.) > 20, .) %>% # filter 
   comp_barplot(tax_level = "genus", n_taxa = 30, sample_order = "bray",
                label = "host_genus" ) +
   facet_wrap(vars(PCR), scales = "free") +  
@@ -400,7 +388,7 @@ PCR.low.names <- sample_names(data.bacteria.low)[
   metadata.bacteria.low$host_genus != "Aglais" ] # Keep Aglais as outgroup in the dataset
 
 # Define thresholds to remove samples with high Cyano reads
-max_percent <- 2 # max 10%
+max_percent <- 2 # max 2%
 max_reads <- 500 # max 500 reads
 
 # Identify samples with high Cyano reads
@@ -419,6 +407,7 @@ high.cyano.samples.comp <-
   coord_flip() + ggtitle("data.bacteria", "samples with > 500 cyano reads") +
   theme(axis.ticks.y = element_blank(), strip.text = element_text(face = "bold"))
 
+rm(high_cyano.reads.subset)
 
 # Combine high Cyano with low PCR samples (partly overlapping)
 tag_troublemaker <- union(high_cyano_read_samples, PCR.low.names) 
@@ -434,22 +423,7 @@ troublemaker.comp <-
   coord_flip() + ggtitle("troublemaker.subset") +
   theme(axis.ticks.y = element_blank(), strip.text = element_text(face = "bold"))
 
-# Make ordination to highlight troublemaker
-all.PCR.low.names <- sample_names(data.bacteria.low)
-all_troublemaker <- union(high_cyano_read_samples, all.PCR.low.names) 
-
-data.bacteria.rel <- transform_sample_counts(data.bacteria.p, function(x) x/sum(x))
-bacteria.PCoA <- ordinate(data.bacteria.rel, method="PCoA",distance = "bray")
-
-pcoa_df <- plot_ordination(data.bacteria.rel, bacteria.PCoA, justDF = TRUE)
-pcoa_df$SampleID <- rownames(pcoa_df)
-pcoa_df$label <- ifelse(pcoa_df$SampleID %in% all_troublemaker, pcoa_df$SampleID, NA)
-pcoa_df$nolabel <- ifelse(!(pcoa_df$SampleID %in% all_troublemaker), pcoa_df$SampleID, NA)
-
-troublemaker.ordinate.plot <- ggplot(pcoa_df, aes(x = Axis.1, y = Axis.2, color = type, shape = type)) +
-  geom_point(size = 4) +
-  geom_label(aes(label = label), size = 3, na.rm = TRUE) +
-  theme_grid() 
+rm(troublemaker.subset)
 
 # Remove troublemaker from all datasets (needed later for filterframe)
 data.comp.subset <- prune_samples(!(sample_names(data.comp) %in% tag_troublemaker), data.comp)
@@ -487,36 +461,15 @@ PCR.depth
 PCR.low.samplesums 
 high.cyano.samples.comp
 troublemaker.comp
-troublemaker.ordinate.plot
 dev.off()
 
 # Cleanup pipeline
 rm(data.bacteria.subset)
 rm(data.bacteria.condensed)
 rm(data.bacteria.low)
-rm(data.bacteria.rel)
-rm(data.bacteria.p)
 rm(PCR.depth)
 rm(cyano.removed)
 rm(troublemaker.comp)
-
-
-# Pre-Check which samples have unique and low abundant ASVs, optionally remove samples from which more than xx% would be removed
-data.prevcheck <- tax_filter(data.fixed , min_prevalence = 3, min_total_abundance = 50, min_sample_abundance = 5 )
-
-prevcheck.removed <-  prune_taxa(setdiff(taxa_names(data.fixed), taxa_names(data.prevcheck)), data.fixed)
-
-prevcheck.removed.frame <- data.frame(
-  prevfilter = sample_sums(prevcheck.removed),
-  samplesum = sample_sums(data.fixed),
-  host_genus = sample_data(prevcheck.removed)$host_genus,
-  prevfilter_percent = (sample_sums(prevcheck.removed) / sample_sums(data.fixed)) * 100 )
-
-# Sort the dataframe in decreasing order
-prevcheck.removed.frame.sorted <- prevcheck.removed.frame[order(prevcheck.removed.frame$prevfilter_percent), ]
-
-# Pre check to identify hyperdiverse samples (from which more then xx% ASVs would be removed)
-print(prevcheck.removed.frame.sorted)
 
 ## 00 data.prevfilter  ---------------------
 # Prevalence filter to remove rare taxa / spurious phyla / singletons
@@ -554,10 +507,10 @@ prevalence_cutoff <- ggplot(data.fixed.prevdf, aes(TotalAbundance, Prevalence / 
 # Adjust conditions for min abundance and min prevalence filtering
 # Calculate good cutoff e.g. less than 0.01 percent of data set (0.01/100)
 data.sums <- data.frame(sum = sample_sums(data.fixed))
-cutoff_min_total_abundance <- ((0.01/100 ) * sum(data.sums)) # 0.01% 
-cutoff_min_total_abundance # equals about 600 reads  
+prev_cutoff_abundance <- ((0.01/100 ) * sum(data.sums)) # 0.01% 
+prev_cutoff_abundance # equals about 600 reads  
 
-cutoff_percent <- cutoff_min_total_abundance*100/(sum(data.sums))  
+cutoff_percent <- prev_cutoff_abundance*100/(sum(data.sums))  
 cutoff_percent # 0.01% cutoff
 
 # Inspect data: Most ASVs have less than 100 reads 
@@ -577,7 +530,6 @@ min_prevalence <- (1.5*nsamples(data.fixed))/100
 min_prevalence # equals about 3 samples --> set this number as min_prevalence
 percent_of_samples <- (3*100)/nsamples(data.fixed)
 percent_of_samples
-
 
 ### Low stringent filtering ASV level
 # For Peru set min_prevalence = 3, min_total_abundance = 60 reads (0.001 percent) 
@@ -625,17 +577,12 @@ prevfilter.removed <- prune_taxa(setdiff(names(taxa_sums(data.fixed)), names(tax
 percentage_removed_total <- 100 * sum(sample_sums(prevfilter.removed)) / sum(sample_sums(data.fixed))
 percentage_removed_sample <- 100 * sum(sample_sums(subset_samples(prevfilter.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.fixed, type == "sample")))
 
-percentage_removed_total #  1.27%
-percentage_removed_sample # 1.17%
-
+cat("Percent of reads removed total:", round(percentage_removed_total, 2), "%\n")
+cat("Percent of reads removed sample:", round(percentage_removed_sample, 2), "%\n")
 
 # Show filtered ASVs and genus names
-prevfilter.removed.taxa.genus <- data.frame(
-  Genus = tax_table(prevfilter.removed)[names(sort(taxa_sums(prevfilter.removed), decreasing = TRUE)[1:50]), "genus"],
-  Abundance = sort(taxa_sums(prevfilter.removed), decreasing = TRUE)[1:50] )
-
-# Show list of removed ASVs
-prevfilter.removed.taxa.genus
+prevfilter.removed.taxa.genus <- single.sample.check(prevfilter.removed, n = 40) 
+prevfilter.removed.taxa.genus # Show list of removed ASVs
 
 # Make dataframe with percent removed Prevfilter per sample 
 prevfilter.removed.frame <- data.frame(
@@ -645,14 +592,13 @@ prevfilter.removed.frame <- data.frame(
   host_subfamily = sample_data(prevfilter.removed)$host_subfamily,
   type       = sample_data(prevfilter.removed)$type,
   PCR        = sample_data(prevfilter.removed)$PCR,
-  prevfilter_percent = (sample_sums(prevfilter.removed) / sample_sums(data.fixed)) * 100)
-# Sort the dataframe in decreasing order
-prevfilter.removed.frame.sorted <- prevfilter.removed.frame[order(prevfilter.removed.frame$prevfilter_percent), ]
+  prevfilter_percent = round((sample_sums(prevfilter.removed) / sample_sums(data.fixed)) * 100, 2)) %>%
+  arrange(prevfilter_percent)
 
-tail(prevfilter.removed.frame.sorted, 50)
+tail(prevfilter.removed.frame, 50)
 
 # Mean percentage of prevfilter removed reads per genus
-mean_prevfilter_by_genus <- prevfilter.removed.frame.sorted %>%
+mean_prevfilter_by_genus <- prevfilter.removed.frame %>%
   mutate(prevfilter_percent = as.numeric(prevfilter_percent)) %>%
   group_by(host_genus) %>%
   summarise(prevfilter_percent = round(mean(prevfilter_percent, na.rm = TRUE), 2)) %>% 
@@ -662,23 +608,18 @@ mean_prevfilter_by_genus <- prevfilter.removed.frame.sorted %>%
 as.data.frame(mean_prevfilter_by_genus)
 
 # Check what had been removed for individual sample
-single.sample.check <- prune_samples(sample_names(prevfilter.removed) == "AW.B1.G069_S69", prevfilter.removed)
-sample_sums(single.sample.check) # list total sample sum
-data.frame(
-  genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:20]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:20])
+# single.sample.check(prevfilter.removed, "AW.B1.G069_S69") # optional: n = 15, rank = "family"
 
 # Show prevfilter removed taxa 
 prevfilter.removed.p <- tax_glom(prevfilter.removed,taxrank="phylum") #simplify to phylum makes psmelt smaller speed up figure
 prevfilter.removed.p <- prune_taxa(taxa_sums(prevfilter.removed.p) > 100, prevfilter.removed.p) # remove minor phyla to keep figure simple
 prevfilter.removed.melt <- psmelt(prevfilter.removed.p)
 
-prevfilter.lowrank <- ggplot(prevfilter.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") +
-  coord_flip(xlim = c(0, 50)) + ggtitle("Prevalence filter")
+prevfilter.lowrank <- ggplot(prevfilter.removed.melt, aes(x=Abundance , y= reorder(Sample, -Abundance), fill=phylum)) +
+  geom_bar(stat = "identity") + coord_cartesian(ylim = c(0, 50))  +  
+  labs(title = "Prevalence filter", x = "reads removed", y = "sample name")
 
-prevfilter.removed.plot <- ggplot(prevfilter.removed.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("Prevalence filter") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
+prevfilter.removed.plot <- ggplot(prevfilter.removed.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(stat = "identity") + ggtitle("Prevalence filter") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
 
 prevfilter.percentremoved <- ggplot(prevfilter.removed.frame , aes(x=prevfilter_percent, y=samplesum, color=host_subfamily, size = prevfilter)) +
   geom_point(alpha=0.7) + facet_wrap(~type) + ylim(0, 80000) + xlim(0, 100) + 
@@ -715,23 +656,16 @@ data.prevfilter.phyla.comp <- data.prevfilter %>%
   coord_flip() + ggtitle("data.prevfilter") +
   theme(axis.ticks.y = element_blank(), strip.text = element_text(face = "bold"))
 
-# Boxplot phyla per sample type
-#data.prevfilter.rel <- transform_sample_counts(data.prevfilter, function(x) 100*x/sum(x))
-#data.prevfilter.rel.glom <- tax_glom(data.prevfilter.rel, taxrank = 'phylum')
-#df.glom <- psmelt(data.prevfilter.rel.glom) # create data frame
-#boxplot.phyla.per.sample.type <- ggplot(df.glom, aes(x=phylum, y=Abundance, fill=type)) + geom_boxplot()
-
 # Visualize rare phyla
 data.minorphyla = subset_taxa(data.fixed, phylum!="Proteobacteria" & phylum!= "Actinobacteria" & phylum!= "Bacteroidetes" & phylum!= "Firmicutes" & phylum!= "Tenericutes" )
+table(tax_table(data.minorphyla)[, "phylum"], exclude = NULL)
 data.minorphyla <- tax_glom(data.minorphyla,taxrank="phylum") #simplify to phylum makes psmelt smaller speed up figure
 data.minorphyla <- prune_taxa(taxa_sums(data.minorphyla) > 100, data.minorphyla)  # remove minor phyla to keep figure simple
 data.minorphyla.melt <- psmelt(data.minorphyla)
 
-minorphyla <- ggplot(data.minorphyla.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("samples with rare phyla") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
+minorphyla <- ggplot(data.minorphyla.melt, aes(x=Sample, y=Abundance, fill=phylum)) + geom_bar(stat = "identity", linewidth = 5) + ggtitle("samples with rare phyla") + theme(axis.text.x = element_blank()) + facet_wrap(~host_genus, scales="free_x")
 
-minorphyla.lowrank <- ggplot(data.minorphyla.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(#position="fill",
-  stat = "identity") +
+minorphyla.lowrank <- ggplot(data.minorphyla.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=phylum)) + geom_bar(stat = "identity") +
   coord_flip(xlim = c(0, 30)) + ggtitle("samples with rare phyla")
 
 pdf(file.path(out_dir, "00_data_prevfilter.pdf"), width=12, height=6)
@@ -762,7 +696,7 @@ table(tax_table(data.prevfilter)[, "phylum"], exclude = NULL)
 prevfilter.removed
 table(tax_table(prevfilter.removed)[, "phylum"], exclude = NULL)
 "percent removed per sample [%]"
-tail(prevfilter.removed.frame.sorted, 50)
+tail(prevfilter.removed.frame, 50)
 cat("ASV filter percent of reads removed:", round(ASV_percentage_removed, 2), "%\n")
 cat("Genus filter percent of reads removed:", round(genus_percentage_removed, 2), "%\n")
 cat("Percent of reads removed total:", round(percentage_removed_total, 2), "%\n")
@@ -774,8 +708,6 @@ prevfilter.removed.taxa.genus
 sink()
 
 # Cleanup pipeline
-rm(data.prevcheck)
-rm(prevcheck.removed)
 rm(data.fixed.prune500)
 rm(data.filter.ASV)
 rm(data.fixed.phyla.comp)
@@ -785,7 +717,6 @@ rm(minorphyla.lowrank)
 rm(prevfilter.removed.melt)
 rm(prevfilter.lowrank)
 rm(prevfilter.removed.plot)
-
 
 # 00 data.pruned  ----------------
 # Remove positive controls (mock community and spike-in control taxa)
@@ -858,22 +789,14 @@ check.finetuning <- subset_taxa(spike.remove.finetuning, genus=="Pseudomonas" )
 sort(data.frame(sum = sample_sums(check.finetuning )), decreasing = FALSE)
 
 # (optional) check individual samples if only mock gets removed, if not, put ASV manually in keep_ASV2
-single.sample.check <- prune_samples(sample_names(spike.remove.finetuning) == "AW.B1.P003_S114", spike.remove.finetuning) # AW.B2.P80_S234 AW.B2.P82_S237
-# single.sample.check <- subset_samples(spike.remove.finetuning, study=="Peru") # look at entire projects  
-sample_sums(single.sample.check) # list sum of reads removed in this sample
-# Show genus names and taxa sums of top ASVs in a sample
-data.frame(
-  genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10])
+# single.sample.check(spike.remove.finetuning, "AW.B1.P003_S114") # optional: n = 15, rank = "family"
 
 spike.remove.finetuning.g <- tax_glom(spike.remove.finetuning,taxrank="genus") # speed up figures (and safe space) 
 spike.finetuning.melt <- psmelt(spike.remove.finetuning.g)
 
-spike.remove.finetuning.bar <- ggplot(spike.finetuning.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("pos control removal finetuning") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
+spike.remove.finetuning.bar <- ggplot(spike.finetuning.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(stat = "identity") + ggtitle("pos control removal finetuning") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
 
-spike.remove.finetuning.lowrank <- ggplot(spike.finetuning.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity") +
+spike.remove.finetuning.lowrank <- ggplot(spike.finetuning.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(stat = "identity") +
   coord_flip(xlim = c(0, 30))
 
 # Unite mock taxa to be removed
@@ -885,18 +808,16 @@ sort(data.frame(sum = sample_sums(spike.removed)), decreasing = FALSE)
 spike.removed.g <- tax_glom(spike.removed,taxrank="genus") # speed up figures (and safe space) 
 spike.remove.melt <- psmelt(spike.removed.g)
 
-spike.remove.bar  <- ggplot(spike.remove.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("pos control removal") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
+spike.remove.bar  <- ggplot(spike.remove.melt, aes(x=Sample, y=Abundance, fill=genus)) + geom_bar(stat = "identity", linewidth = 5) + ggtitle("pos control removal") + theme(axis.text.x = element_blank()) + facet_wrap(~subtype, scales="free_x")
 
-spike.remove.lowrank <- ggplot(spike.remove.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(#position="fill",
-  stat = "identity") + ggtitle("pos control removal") + coord_flip(xlim = c(0, 30))
+spike.remove.lowrank <- ggplot(spike.remove.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=genus)) + geom_bar(stat = "identity") + ggtitle("pos control removal") + coord_flip(xlim = c(0, 30))
 
 # Percentage of reads removed overall and per sample
 percentage_spike_total <- 100 * sum(sample_sums(spike.removed)) / sum(sample_sums(data.prevfilter))
 percentage_spike_sample  <- 100 * sum(sample_sums(subset_samples(spike.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.prevfilter, type == "sample")))
 
-percentage_spike_total  # 2.001
-percentage_spike_sample # 0.420
+percentage_spike_total  # 1.98%
+percentage_spike_sample # 0.39%
 
 # Percentage of spike removed per sample
 spike.removed.frame <- data.frame(
@@ -905,12 +826,10 @@ spike.removed.frame <- data.frame(
   host_genus = sample_data(spike.removed)$host_genus,
   host_subfamily = sample_data(spike.removed)$host_subfamily,
   type = sample_data(spike.removed)$type,
-  spike_percent = (sample_sums(spike.removed) / sample_sums(data.prevfilter)) * 100)
+  spike_percent = round((sample_sums(spike.removed) / sample_sums(data.prevfilter)) * 100, 2) ) %>%
+  arrange(spike_percent)
 
-# Sort the dataframe in decreasing order
-spike.removed.frame.sorted <- spike.removed.frame[order(spike.removed.frame$spike_percent), ]
-print(spike.removed.frame.sorted)
-tail(spike.removed.frame.sorted,50)
+tail(spike.removed.frame,50)
 
 spike.remove.percentremoved <- ggplot(spike.removed.frame, aes(x=spike_percent, y=samplesum, color=host_genus, size = spike)) +
   geom_point(alpha=0.7) + ylim(0, 80000) + xlim(0, 100) + 
@@ -972,8 +891,8 @@ rm(data.pruned1)
 sink(file.path(out_dir, "00_data_pruned_control_removal.txt"))
 "mock_genera"
 mock_genera
-"spike.removed.frame.sorted"
-print(spike.removed.frame.sorted)
+"spike.removed.frame"
+print(spike.removed.frame)
 "data.prevfilter "
 data.prevfilter 
 "data.pruned"
@@ -1029,21 +948,16 @@ sort(data.frame(sum = sample_sums(singleASV)), decreasing = FALSE)
 data.frame(sort(sample_sums(decontam.removed.neg), decreasing = T)[1:10])
 sum(taxa_sums(decontam.removed.neg))
 
-single.sample.check <- prune_samples(sample_names(decontam.removed.neg) == "AW.B1.G032_S33", decontam.removed.neg)
-data.frame(
-  genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10])
+# single.sample.check(decontam.removed.neg, "AW.B1.G032_S33") # optional: n = 15, rank = "family"
 
 # Show to be removed taxa
 decontam.removed.neg.p <- tax_glom(decontam.removed.neg,taxrank="order") # speed up figures (and safe space)
 decontam.removed.neg.melt <- psmelt(decontam.removed.neg.p)
 
-decontam.removed.neg.lowrank <- ggplot(decontam.removed.neg.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=order)) + geom_bar(#position="fill",
-  stat = "identity") +
+decontam.removed.neg.lowrank <- ggplot(decontam.removed.neg.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=order)) + geom_bar(stat = "identity") +
   coord_flip(xlim = c(0, 60)) + ggtitle("decontam neg")
 
-decontam.removed.neg.bargraph <- ggplot(decontam.removed.neg.melt, aes(x=Sample, y=Abundance, fill=order)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("decontam neg") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
+decontam.removed.neg.bargraph <- ggplot(decontam.removed.neg.melt, aes(x=Sample, y=Abundance, fill=order)) + geom_bar(stat = "identity", linewidth = 5) + ggtitle("decontam neg") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
 
 # Show decontam.neg on plate frame
 plate.decontam.neg  <- plate_frame(decontam.removed.neg)
@@ -1083,21 +997,16 @@ data.frame(
 data.frame(sort(sample_sums(decontam.removed.pos), decreasing = T)[1:10])
 sum(taxa_sums(decontam.removed.pos))
 
-single.sample.check <- prune_samples(sample_names(data.pruned) == "AW.B1.P003_S114", decontam.removed.pos) # AW.B1.G056_S58 AW.B1.G029_S29
-data.frame(
-  genus = as.character(tax_table(single.sample.check)[names(sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10]), "genus"]),
-  Taxa_Sum = sort(taxa_sums(single.sample.check), decreasing = TRUE)[1:10])
+# single.sample.check(decontam.removed.pos, "AW.B1.P003_S114") # optional: n = 15, rank = "family"
 
 # Show to be removed taxa
 decontam.removed.pos.p <- tax_glom(decontam.removed.pos,taxrank="family") # speed up figures (and safe space)
 decontam.removed.pos.melt <- psmelt(decontam.removed.pos.p)
 
-decontam.removed.pos.lowrank <- ggplot(decontam.removed.pos.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=family)) + geom_bar(#position="fill",
-  stat = "identity") +
+decontam.removed.pos.lowrank <- ggplot(decontam.removed.pos.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=family)) + geom_bar(stat = "identity") +
   coord_flip(xlim = c(0, 60)) + ggtitle("decontam pos")
 
-decontam.removed.pos.bargraph <- ggplot(decontam.removed.pos.melt, aes(x=Sample, y=Abundance, fill=family)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("decontam pos") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
+decontam.removed.pos.bargraph <- ggplot(decontam.removed.pos.melt, aes(x=Sample, y=Abundance, fill=family)) + geom_bar(stat = "identity", linewidth = 5) + ggtitle("decontam pos") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
 
 # Show decontam.pos on plate frame
 plate.decontam.pos <- plate_frame(decontam.removed.pos)
@@ -1129,13 +1038,10 @@ decontam.removed.frame <- data.frame(
   host_genus = sample_data(decontam.removed)$host_genus,
   host_subfamily = sample_data(decontam.removed)$host_subfamily,
   type = sample_data(decontam.removed)$type,
-  decontam_percent = (sample_sums(decontam.removed) / sample_sums(data.pruned)) * 100 )
+  decontam_percent = round((sample_sums(decontam.removed) / sample_sums(data.pruned)) * 100, 2)) %>%
+  arrange(decontam_percent)
 
-# Sort by decontam_percent
-decontam.removed.frame.sorted <- decontam.removed.frame[
-  order(decontam.removed.frame$decontam_percent), ]
-
-tail(decontam.removed.frame.sorted,50)
+tail(decontam.removed.frame,50)
 
 ## Check what has been decontamed
 decontam.percentremoved <- ggplot(decontam.removed.frame, aes(x=decontam_percent, y=samplesum, color=host_subfamily, size = decontam)) +
@@ -1150,11 +1056,11 @@ decontam.percent.boxplot <- ggplot(decontam.removed.frame, aes(x = type, y = dec
 percentage_removed_decontam_total <- 100 * sum(sample_sums(decontam.removed)) / sum(sample_sums(data.pruned))
 percentage_removed_decontam_sample  <- 100 * sum(sample_sums(subset_samples(decontam.removed, type == "sample"))) / sum(sample_sums(subset_samples(data.pruned, type == "sample")))
 
-percentage_removed_decontam_total  # 0.179%
-percentage_removed_decontam_sample # 0.159%
+cat("Percent reads removed decontam total:", round(percentage_removed_decontam_total, 2), "%\n")
+cat("Percent reads removed decontam sample:", round(percentage_removed_decontam_sample, 2), "%\n")
 
 # Mean percent decontam by host genus
-mean_decontam_by_genus <- decontam.removed.frame.sorted %>%
+mean_decontam_by_genus <- decontam.removed.frame %>%
   mutate(decontam_percent = as.numeric(decontam_percent)) %>%
   group_by(host_genus) %>%
   summarise(decontam_percent = round(mean(decontam_percent, na.rm = TRUE), 2)) %>% 
@@ -1169,12 +1075,9 @@ decontam.removed.top.ASVs <- data.frame(
   Abundance = taxa_sums(decontam.removed)[top_decontam_removed],
   Genus = tax_table(decontam.removed)[top_decontam_removed, "genus"])
 
-decontam.removed.top.ASVs
-
-
 # View the sorted dataframe
 sink(file.path(out_dir, "00_data_pruned_decontam.txt"))
-print(decontam.removed.frame.sorted)
+print(decontam.removed.frame)
 cat("Percent reads removed decontam total:", round(percentage_removed_decontam_total, 2), "%\n")
 cat("Percent reads removed decontam sample:", round(percentage_removed_decontam_sample, 2), "%\n")
 "Mean percent decontam by host genus"
@@ -1209,7 +1112,6 @@ table(tax_table(data.decontam)[, "phylum"], exclude = NULL)
 ## Validate sample names
 data.decontam <- phyloseq_validate(data.decontam)
 
-
 ## 00 cleanup comparison  ------------------
 # Overview of all filtering steps, will be exported later as csv file 
 
@@ -1231,13 +1133,12 @@ filterframe.df$C_prevremoved <- sample_sums(prevfilter.removed)
 filterframe.df$D_spillremoved <- sample_sums(spike.removed)
 filterframe.df$E_decontamremoved <- sample_sums(decontam.removed)
 
-filterframe.df$B_cyanopercent <- ((filterframe.df$B_cyanoremoved) / (filterframe.df$A_data.comp)) * 100
-filterframe.df$C_prevfilterpercent <- ((filterframe.df$C_prevremoved) / (filterframe.df$B_data.bacteria)) * 100
-filterframe.df$D_prunedpercent <- ((filterframe.df$D_spillremoved) / (filterframe.df$C_data.prevfilter)) * 100
-filterframe.df$E_decontampercent <- ((filterframe.df$E_decontamremoved) / (filterframe.df$D_data.pruned)) * 100
+filterframe.df$B_cyanopercent      <- round(((filterframe.df$B_cyanoremoved)   / (filterframe.df$A_data.comp))      * 100, 2)
+filterframe.df$C_prevfilterpercent <- round(((filterframe.df$C_prevremoved)     / (filterframe.df$B_data.bacteria))  * 100, 2)
+filterframe.df$D_prunedpercent     <- round(((filterframe.df$D_spillremoved)    / (filterframe.df$C_data.prevfilter))* 100, 2)
+filterframe.df$E_decontampercent   <- round(((filterframe.df$E_decontamremoved) / (filterframe.df$D_data.pruned))   * 100, 2)
 
-filterframe.df$filtersum <- (filterframe.df$A_data.comp - filterframe.df$E_data.decontam) /  filterframe.df$A_data.comp * 100
-
+filterframe.df$filtersum <- round((filterframe.df$A_data.comp - filterframe.df$E_data.decontam) /  filterframe.df$A_data.comp * 100, 2)
 
 plot.cyano <- ggplot(filterframe.df, aes(x=B_Shannon, y=B_data.bacteria, size = B_cyanopercent , color=type))  + geom_point(alpha=0.7) + 
   ggtitle("Cyano / plants removed"  ) +  ylim(0, 75000)
@@ -1274,20 +1175,16 @@ lib.comparison <- ggplot(data = filterframe_long, aes(x = Rank, y = ReadCount, c
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   scale_shape_manual(values = c(21, 22, 23, 24, 25, 20))
 
-
 heatframe_long <- filterframe.df %>%
   rownames_to_column("Sample") %>%
   arrange(E_data.decontam) %>%
-  mutate(
-    Rank = row_number(),
-    SampleLabel = paste0(Sample, " (", E_data.decontam, ")")
-  ) %>%
+  mutate(Rank = row_number(),
+    SampleLabel = paste0(Sample, " (", E_data.decontam, ")")  ) %>%
   filter(type == "sample") %>%
   pivot_longer(
     cols = c(B_cyanopercent, C_prevfilterpercent, D_prunedpercent, E_decontampercent),
     names_to = "Variable",
-    values_to = "Value"
-  )
+    values_to = "Value"  )
 
 # Plot the heatmap
 lib.heatmap <- ggplot(heatframe_long, aes(x = reorder(SampleLabel, Rank), y = Variable, fill = Value)) +
@@ -1312,14 +1209,12 @@ sink(file.path(out_dir, "00_data_pruning_cleanup_comparison.txt"))
 filterframe_sorted
 sink()
 
-
 # (optional) export high filtered samples (filtersum >40%) to be pruned later
 high_filtered_samples <- filterframe.df %>%
   filter(type == "sample", filtersum > 40) %>%  
   rownames()   
 
 high_filtered_samples
-
 
 pdf(file.path(out_dir, "00_data_pruning_cleanup_comparison.pdf"), width=12, height=6)
 plot.cyano 
@@ -1365,7 +1260,6 @@ data.decontam.df$Actinobacteria <- sample_sums(subset_taxa(data.decontam.rel, ph
 data.decontam.df$Sphingomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Sphingomonas"))
 data.decontam.df$Brevundimonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Brevundimonas"))
 data.decontam.df$Pseudomonas <- sample_sums(subset_taxa(data.decontam.rel, genus=="Pseudomonas"))
-data.decontam.df$Bacillus <- sample_sums(subset_taxa(data.decontam.rel, genus=="Bacillus" ))
 
 # SC list all samples
 sample_SC_list <- data.frame(
@@ -1384,15 +1278,11 @@ plot.actino <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Actin
 plot.Brev <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Brevundimonas, color=subtype))  + geom_point(alpha=0.7) + 
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +  ggtitle(paste("LT:", cutoff)) + ylab("read counts")
 
-plot.Bacillus <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Bacillus, color=subtype))  + geom_point(alpha=0.7) + 
-  geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +  ggtitle(paste("LT:", cutoff)) + ylab("read counts")
-
 sum.shannon.genus <- ggplot(data.decontam.df, aes(x=Shannon, y=samplesum, size = Sphingomonas, color=subtype))  +
   geom_point(alpha=0.7)  +
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2) +
   ggtitle(paste("LT:", cutoff)) + ylim(0, 10000)  +
   facet_wrap(~host_genus) + ylab("read counts")
-
 
 # Compare Sample Coverage vs read count cut-off
 SC.reads.plot <- ggplot(data.decontam.df, aes(x=samplesum , y=SC, size = InvSimpson, color=SC < SC_cutoff, shape=type))  + geom_point(alpha=0.7) + # size = samplesum,
@@ -1401,7 +1291,6 @@ SC.reads.plot <- ggplot(data.decontam.df, aes(x=samplesum , y=SC, size = InvSimp
   #scale_x_log10() +
   coord_cartesian(xlim = c(0, 80000)) +
   labs(title = paste("SC cutoff:", SC_cutoff, "vs LT cutoff:", cutoff), x = "read counts", y = "Sample Coverage (SC)" )
-
 
 SC.Shannon.plot <- ggplot(data.decontam.df, aes(x=exp(Shannon), y=SC, size = samplesum, color=subtype, shape=SCcutoff))  + geom_point(alpha=0.7) + 
   geom_hline(yintercept = SC_cutoff, alpha = 0.5, linetype = 2) + 
@@ -1413,7 +1302,6 @@ SC.Simpson.plot <- ggplot(data.decontam.df, aes(x=InvSimpson, y=SC, size = sampl
 
 SC.Simpson.reads.plot  <- ggplot(data.decontam.df, aes(x=InvSimpson , y=samplesum, size = SC, color=SC < SC_cutoff, shape=type))  + geom_point(alpha=0.7) +
   geom_hline(yintercept = cutoff, alpha = 0.5, linetype = 2)  
-
 
 SC.per.genus <- ggplot(data.decontam.df, aes(x = fct_reorder(host_genus, -samplesum, .fun = median, na.rm = TRUE), y = SC, color = host_subfamily)) +
   geom_boxplot(alpha = 0.5, outlier.shape = NA) +
@@ -1474,7 +1362,6 @@ read.depth.per.genus <- ggplot(data.high.df, aes(x = fct_reorder(host_genus, -sa
   geom_point(shape = 21, alpha = 0.7,size = 2) +
   theme_line2()  + theme(axis.text.x = element_text(angle = 60, hjust = 1) ) +  labs(x="",y="read depth", title ="read depth per genus")
 
-
 samplesum.vs.shannon <- ggplot(data.high.df, aes(x = samplesum, y = Shannon)) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = FALSE) +
@@ -1491,8 +1378,6 @@ seq.depth.distribution <- ggplot(data.high.df, aes(x = samplesum)) +
   scale_x_log10() +
   theme_classic() +
   labs(title = "Sequencing depth distribution")
-
-
 
 # Create a dataframe with sample sums and metadata
 sorted_data.high.df <- data.frame(
@@ -1518,8 +1403,6 @@ data.low.comp <- data.low %>%
   coord_flip() +
   ggtitle(paste("data.low low coverage samples SC <", SC_cutoff )) +
   theme(axis.ticks.y = element_blank(), strip.text = element_text(face = "bold"))
-
-
 
 LT.samples.SC = prune_samples(sample_sums(data.high)<10000, data.high)
 LT.samples.SC # only LT samples
@@ -1554,7 +1437,6 @@ mean_SC_by_genus_after <- data.high.df %>%
 
 as.data.frame(mean_SC_by_genus_after)
 
-
 # Show sample sums to identify best cut-off
 sink(file.path(out_dir, "00_data_sample_cutoff_SC.txt"))
 "Sample sums above SC cutoff"
@@ -1569,11 +1451,9 @@ as.data.frame(mean_SC_by_genus)
 as.data.frame(mean_SC_by_genus_after)
 sink()
 
-
 pdf(file.path(out_dir, "00_data_sample_cutoff_SC.pdf"), width=12, height=6)
 plot.actino
 plot.Brev 
-plot.Bacillus
 sum.shannon.genus
 SC.reads.plot
 SC.Shannon.plot 
@@ -1590,19 +1470,17 @@ data.low.comp
 LT.samples.SC.comp
 dev.off()
 
-
 rm(data.high.low.comp)
 rm(data.high.rel)
+rm(data.decontam.rel)
 
 ## sample.species (tax_glom genus)
 ## Multiple ASVs might represent the same bacterial genus, here they are collated 
-
 data.high # ASV level including controls
 sample.ASV <- subset_samples(data.high, type=="sample") #  ASV level only samples
-sample.species <- tax_glom(sample.ASV,taxrank="genus") # tax_glom processing takes time
+sample.species <- tax_glom(sample.ASV,taxrank="genus") # tax_glom processing (takes time)
 taxa_names(sample.species) <- tax_table(sample.species)[,"genus"]
 sample.species  # Genus level only samples
-
 
 ## 00 (optional) sample.filter  -----------------------
 # Optional low abundance filtering on genus level (only samples, no controls)
@@ -1657,12 +1535,10 @@ cat("Percent of reads removed:", round(percentage_removed_filter, 2), "%\n")
 genus.removed.p <- tax_glom(genus.removed,taxrank="order")
 sample.removed.melt <- psmelt(genus.removed.p)
 
-sample.filter.lowrank <- ggplot(sample.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=order)) + geom_bar(#position="fill",
-  stat = "identity") +
+sample.filter.lowrank <- ggplot(sample.removed.melt, aes(x=reorder(Sample, -Abundance), y=Abundance, fill=order)) + geom_bar(stat = "identity") +
   coord_flip(xlim = c(0, 60)) + ggtitle("sample.filter")
 
-sample.filter.bar <- ggplot(sample.removed.melt, aes(x=Sample, y=Abundance, fill=order)) + geom_bar(#position="fill",
-  stat = "identity", linewidth = 5) + ggtitle("sample.filter") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
+sample.filter.bar <- ggplot(sample.removed.melt, aes(x=Sample, y=Abundance, fill=order)) + geom_bar(stat = "identity", linewidth = 5) + ggtitle("sample.filter") + theme(axis.text.x = element_blank()) + facet_wrap(~host_subfamily, scales="free_x")
 
 # Compare data frames before after  
 sample.filter.df <- as(sample_data(sample.filter),"data.frame")
@@ -1685,6 +1561,9 @@ sample.filter.bar
 sample.filter.percent
 dev.off()
 
+rm(sample.removed.melt)
+rm(sample.filter.bar)
+rm(sample.filter.lowrank)
 
 sink(file.path(out_dir, "00_data_sample_filter_(optional).txt"))
 "sample.filter"
@@ -1699,28 +1578,17 @@ cat("Percent of reads retained:", round(percent_retained, 2), "%\n")
 cat("Percent of reads removed:", round(percentage_removed_filter, 2), "%\n")
 sink()
 
-
 ### > cleanup pipeline / export sample data csv  -------------------
 # Check filesize of all ps objects
 # sapply(ls(), function(x) object.size(get(x))) %>% sort(decreasing = TRUE)
 # Print size of ps objects
-print(object.size(data.comp.subset), units = "auto")
 print(object.size(data.bacteria), units = "auto")
-print(object.size(prevfilter.removed), units = "auto")
 
 # Clean pipeline delete large ps objects not needed anymore
 rm(data.comp.subset)
-#rm(data.comp)
-#rm(data.bacteria)
-#rm(data.fixed)
 rm(cyano.removed.subset)
 rm(prevfilter.removed)
-#rm(data.prevfilter)
 rm(data.pruned)
-#rm(data.decontam.rel)
-rm(sample.removed.melt)
-rm(sample.filter.bar)
-rm(sample.filter.lowrank)
 gc()
 
 # Export sample metadata as csv file
@@ -1835,7 +1703,6 @@ sample.order.comp.country <- sample.species %>%
 # Comp barplot (merged) phylum
 Sample.comp.merged.phylum <- sample.species%>%
   ps_select(host_genus,host_tribe,host_family,host_subfamily,type,country) %>% # avoids lots of phyloseq::merge_samples warnings
-  #ps_filter(type == "sample") %>%
   phyloseq::merge_samples(group = "host_subfamily") %>%
   comp_barplot(tax_level = "phylum", n_taxa = 5, merge_other = T, sample_order = subfamily_ordered , bar_width = 0.9) +
   labs(x = NULL, y = NULL) + ggtitle(""  ) +
@@ -1844,7 +1711,6 @@ Sample.comp.merged.phylum <- sample.species%>%
 # Comp barplot (merged) order
 Sample.comp.merged.order <- sample.species%>%
   ps_select(host_genus,host_tribe,host_family,host_subfamily,type,country) %>% # avoids lots of phyloseq::merge_samples warnings
-  #ps_filter(type == "sample") %>%
   phyloseq::merge_samples(group = "host_subfamily") %>%
   comp_barplot(tax_level = "order", n_taxa = 10, merge_other = T, sample_order = subfamily_ordered , bar_width = 0.9) +
   labs(x = NULL, y = "rel. ab. [%]") + ggtitle(""  ) +
@@ -1854,7 +1720,6 @@ Sample.comp.merged.order <- sample.species%>%
 # Comp barplot (merged) family
 Sample.comp.merged.family <- sample.species%>%
   ps_select(host_genus,host_tribe,host_family,host_subfamily,type,country) %>% # avoids lots of phyloseq::merge_samples warnings
-  #ps_filter(type == "sample") %>%
   phyloseq::merge_samples(group = "host_subfamily") %>%
   comp_barplot(tax_level = "family", n_taxa = 12, merge_other = T, sample_order = subfamily_ordered, bar_width = 0.9) +
   labs(x = NULL, y = NULL) + ggtitle("Comp barplot merged family"  ) +
@@ -1863,7 +1728,6 @@ Sample.comp.merged.family <- sample.species%>%
 # Comp barplot (merged) genus
 Sample.comp.merged.genus <- sample.species%>%
   ps_select(host_genus,host_tribe,host_family,host_subfamily,type,country) %>% # avoids lots of phyloseq::merge_samples warnings
-  #ps_filter(type == "sample") %>%
   phyloseq::merge_samples(group = "host_subfamily") %>%
   comp_barplot(tax_level = "genus", n_taxa = 12, merge_other = T, sample_order = subfamily_ordered, bar_width = 0.9) +
   labs(x = NULL, y = NULL) + ggtitle("Comp barplot merged genus"  ) +
@@ -1876,7 +1740,6 @@ Sample.comp.merged.order
 Sample.comp.merged.family
 Sample.comp.merged.genus
 dev.off()
-
 
 ## Overview about the main ps objects
 sink(file.path(out_dir, "01_sample_comp_all_overview_median_sum.txt"))
@@ -1907,7 +1770,7 @@ table(sample_data(sample.species)$country)
 table(sample_data(sample.species)$location)
 sink()
 
-## 01 sample comp all rel abundance  -------------------
+## 01 sample comp rel abundance  -------------------
 
 ### Rel abundance all samples (top 20 genera)
 top_taxa_desc <- sort(rowMeans(otu_table(sample.species.rel)), decreasing = TRUE)[1:20]
@@ -1985,17 +1848,6 @@ order_palette <- setNames(orderPalette(orderCount), Top.order)
 # Make sure 'order' in the tornado data is a factor with the correct level order
 sample.top.tornado$order <- factor(sample.top.tornado$order, levels = Top.order)
 
-# Tornado top order / family min 1% rel abundance
-order.fam.country.mirrored <- ggplot(sample.top.tornado , aes(family, Abundance_mirrored, fill= order)) +
-  facet_grid(order~country, space = "free", scales = "free",switch = "y")+ # switch = "y" remove order names
-  theme_grid()+
-  geom_bar(stat="identity")+
-  theme(strip.text.y.left = element_blank(),  # remove the order label
-        axis.title.y = element_blank()) +    # remove "family" title
-  scale_y_continuous(labels = function(x) scales::percent(abs(x))) + # show % as positive
-  scale_fill_manual(values = order_palette) +
-  coord_flip() + labs(y = "rel. ab. [%]")   
-
 # Tornado top order / family min 1% rel abundance / division by genus
 order.fam.country.mirrored.genus <- ggplot(sample.top.tornado, 
        aes(x = family, y = Abundance_mirrored, fill = order, group = genus)) +
@@ -2052,10 +1904,8 @@ sink()
 pdf(file.path(out_dir, "01_sample_comp_all_rel_abundance.pdf"), width=12, height=6)
 relabundance
 relabundance.color.order
-order.fam.country.mirrored 
 order.fam.country.mirrored.genus
 dev.off()
-
 
 # 01 sample comp merged group barplot -------------
 
@@ -2079,8 +1929,7 @@ topgenus_palette <- setNames(taxaPalette(topgenusCount), genus_abundance$genus) 
 sample.species.merged.melt$genus <- factor(sample.species.merged.melt$genus, levels = genus_abundance$genus) # genus names by order
 
 sample.species.top.bar <- ggplot(sample.species.merged.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = genus))+
-  geom_bar(#position="fill",
-    colour="black", linewidth=0.3, # remove black lines optional
+  geom_bar(colour="black", linewidth=0.3, # remove black lines optional
     stat="identity") + 
   scale_fill_manual(values = topgenus_palette)+
   theme_line2() + theme(axis.text.x = element_text(angle = 60, hjust = 1) ) +
@@ -2140,9 +1989,7 @@ sample.order.top.bar.flip <- ggplot(sample.order.top.melt,aes(x = Sample2, y=Abu
   scale_fill_manual(values = order_palette)+
   theme_grid() + 
   scale_y_continuous(labels = scales::label_percent(scale = 100,  prefix = "", suffix = "" )) + 
-  # guides(fill = guide_legend(reverse = TRUE)) + # inverse legend
   coord_flip() + labs(x="",y="rel. ab. [%]")
-
 
 # Top 8 order abundance per host_subfamily
 top_order_abundance <- sample.order.top.melt %>%
@@ -2167,7 +2014,6 @@ Top.family <- names(sort(taxa_sums(sample.family.merged), decreasing=T)[1:10])
 sample.family.top <- subset_taxa(sample.family.merged.rel, taxa_names(sample.family.merged.rel)%in%Top.family)
 sample.family.top.melt <- psmelt(sample.family.top)
 
-
 # Calculate bacterial abundance for color order
 family_abundance <- sample.family.top.melt  %>%
   group_by(family) %>%
@@ -2178,13 +2024,11 @@ topfamilyCount = length(unique(sample.family.top.melt$family))
 family_palette <- setNames(taxaPalette(topfamilyCount), family_abundance$family)  # Assign colors in the abundance order
 sample.family.top.melt$family <- factor(sample.family.top.melt$family, levels = family_abundance$family) # order names by order
 
-
 sample.family.top.bar.flip <- ggplot(sample.family.top.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = F), y=Abundance, fill = family))+
   geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = family_palette)+
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
   theme_grid() +  theme(legend.title=element_text(size=11)) + 
-  #guides(fill = guide_legend(reverse = TRUE)) + # reverses bar fill
   coord_flip() + labs(x="",y="Relative Abundance [%]", fill="Top 12 families")
 
 # Total abundance of top families per host_subfamily
@@ -2265,7 +2109,6 @@ quant.df <- as(sample_data(data.quant), "data.frame") %>%
 
 quant.df$host_subfamily_ordered <- factor(quant.df$host_subfamily, levels = subfamily_ordered)
 
-
 data.quant.qPCR.host  <- ggplot(quant.df, aes(x=host_subfamily, y=log16S)) +
   geom_boxplot(aes(group = host_subfamily))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
@@ -2273,13 +2116,10 @@ data.quant.qPCR.host  <- ggplot(quant.df, aes(x=host_subfamily, y=log16S)) +
   scale_colour_manual(values=subfamily_colorfix) +
   geom_hline(yintercept = LOD, alpha = 0.5, linetype = 2) +
   labs(x="",y="log10 16S copy number", color = "host subfamily") +
-  #facet_wrap(~ country, scales = "free_x") +
   scale_y_continuous(breaks=seq(3,10,1)) +
   guides(
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2) )
-
-
 
 qPCR_plot_host.revision  <- ggplot(quant.df, aes(x=log16S, y=host_subfamily_ordered)) +
   geom_boxplot(aes(group = host_subfamily))+
@@ -2315,7 +2155,9 @@ ggplot(quant.df, aes(x = log16S)) +
 qPCR_plot_host.genus.sort <- ggplot(quant.df, aes(x = fct_reorder(host_genus, log16S, .fun = median, na.rm = TRUE), y=log16S)) +
   geom_boxplot(aes(group = host_genus))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  stat_summary(fun.data = function(x) data.frame(y = 3.1, label = paste0(length(x))), geom = "text", # "n\n", length(x)
+               aes(group = host_genus), vjust = 0.2, size = 3 ) + # ad sample size (n) to plot
+  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1, face = "italic")) +
   scale_colour_manual(values=subfamily_colorfix) +
   scale_y_continuous(breaks = 1:10, labels = scales::math_format(10^.x)  ) +
   labs(x="",y="16S copy number per specimen", color ="host subfamily") +
@@ -2323,19 +2165,24 @@ qPCR_plot_host.genus.sort <- ggplot(quant.df, aes(x = fct_reorder(host_genus, lo
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2) )
 
+# Replicates per subfamily x country
+quant_facet_n <- quant.df %>%
+  filter(host_subfamily != "Danainae") %>%
+  group_by(host_subfamily, country) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(label = paste0("n = ", n))
 
-qPCR_plot_country <- ggplot(quant.df %>% filter(host_subfamily != "Danainae"), aes(x = fct_reorder(country, log16S, .fun = median, na.rm = TRUE), y=log16S)) +
-  geom_boxplot(aes(group = country))+
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_colour_manual(values=subfamily_colorfix) +
-  scale_y_continuous(breaks = 1:10, labels = scales::math_format(10^.x)  ) +
-  labs(x="",y="16S copy number per specimen", color ="host subfamily") +
+qPCR_plot_country  <- ggplot(quant.df %>% filter(host_subfamily != "Danainae"), aes(x = fct_reorder(country, log16S, .fun = median, na.rm = TRUE), y = log16S)) +
+  geom_boxplot(aes(group = country)) +
+  geom_point(position = position_jitter(w = 0.1, h = 0), size = 4, aes(color = host_subfamily, shape = country), alpha = 0.8) +
+  geom_text(data = quant_facet_n, aes(x = country, y = 3, label = label), inherit.aes = FALSE, vjust = -0.1, size = 3) +
+  theme_line2() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_colour_manual(values = subfamily_colorfix) +
+  scale_y_continuous(breaks = 1:10, labels = scales::math_format(10^.x)) +
+  labs(x = "", y = "16S copy number per specimen", color = "host subfamily") +
   facet_wrap(~ host_subfamily, scales = "free_x") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
-
+  guides(color = guide_legend(order = 1),
+         shape = guide_legend(order = 2))
 
 # median log16S per country
 quant.df %>%
@@ -2361,6 +2208,11 @@ wilcox.test(log16S ~ country, data = subset(quant.df, host_subfamily == "Coliadi
 wilcox.test(log16S ~ country, data = subset(quant.df, host_subfamily == "Dismorphiinae"))
 wilcox.test(log16S ~ country, data = subset(quant.df, host_subfamily == "Pierinae"))
 
+# sample size
+with(subset(quant.df, host_subfamily == "Coliadinae"), table(country))
+with(subset(quant.df, host_subfamily == "Dismorphiinae"), table(country))
+with(subset(quant.df, host_subfamily == "Pierinae"), table(country))
+
 ## 16S host genus 
 boxplot(quant.df$log16S ~ quant.df$host_genus) 
 lm.16S.genus <- lm(log16S~ host_genus   , data =  quant.df)
@@ -2369,8 +2221,6 @@ Anova(lm.16S.genus, type=2) # independent order
 plot(lm.16S.genus,2)
 hist(lm.16S.genus$residuals) # extract the residuals
 shapiro.test(residuals(lm.16S.genus)) # Run Shapiro-Wilk test on residuals 
-
-
 
 pdf(file.path(out_dir, "01_sample_comp_quant_16S.pdf"), width=12, height=6)
 data.quant.qPCR.host
@@ -2438,30 +2288,12 @@ genus.core.maxprev <- plot_core(sample.species.rel, plot.type = "heatmap",
     labels = scales::percent_format(accuracy = 1)  ) +
     theme(axis.text.y= element_text(face="italic")) 
 
-
 # Reorder genus names based on prevalence at 1%
-core_0.1 <- core.data %>% filter(DetectionThreshold == 0.01) #1% 0.01 
-genus_order <- core_0.1 %>% arrange((Prevalence)) %>% pull(Taxa)
-
-genus.core.order <- plot_core(sample.species.rel, plot.type = "heatmap", 
-                         min.prevalence = 0.25, # 0.1 is 10%
-                         prevalences = prevalences, 
-                         detections = detections,
-                         horizontal = F,
-                         taxa.order = genus_order) +
-  xlab("rel. ab. [%]") +theme_line2() +
-  scale_fill_gradientn(
-    colours = heat_core_palette,
-    limits = c(0, max_prev),
-    oob = scales::squish,
-    labels = scales::percent_format(accuracy = 1) ) +
-    theme(axis.text.y= element_text(face="italic")) 
-    #theme(axis.text.x= element_text(size=8),axis.text.y= element_text(face="italic"),legend.text = element_text(size=8), legend.title= element_text(size=9))
-
-
+#core_0.1 <- core.data %>% filter(DetectionThreshold == 0.01) #1% 0.01 
+#genus_order <- core_0.1 %>% arrange((Prevalence)) %>% pull(Taxa)
+# use as: taxa.order = genus_order
 
 ### Core family analysis 
-#Set different detection levels and prevalence
 fam_prevalences <- seq(.5, 1, .5) #0.5 = 95% prevalence
 fam_detections <- c(0.002, 0.01, 0.05, 0.1) # 0.1%, 0.5%, 1%, 5% fam_detections <- c(0.001, 0.003, 0.01, 0.05)
 
@@ -2475,7 +2307,6 @@ family.core <- plot_core(sample.family.rel, plot.type = "heatmap",
   
 
 ### Core order analysis 
-#Set different detection levels and prevalence
 prevalences <- seq(.5, 1, .5) #0.5 = 95% prevalence
 detections <- c(0.002, 0.01, 0.05, 0.1) # 0.1%, 1%, 5%, 10%
 order.core <- plot_core(sample.order.rel, plot.type = "heatmap", 
@@ -2496,12 +2327,6 @@ prevalence(sample.species.rel, detection = 1/500, sort = TRUE)[1:20] # 0.2% low 
 core.genus.high <- core_members(sample.species.rel, detection = 0.05, prevalence = 10/100)  # 11 taxa
 core.genus      <- core_members(sample.species.rel, detection = 0.01, prevalence = 20/100)  # 12 taxa
 core.genus.low  <- core_members(sample.species.rel, detection = 0.002, prevalence = 40/100) # 12 taxa
-
-# Enterococcus            Asaia Commensalibacter          Pantoea      Lactococcus       Bartonella         Rahnella            Orbus 
-#0.6826347        0.4850299        0.4491018        0.4191617        0.3772455        0.3353293        0.2754491        0.2634731 
-#Acinetobacter      Entomomonas        Apibacter        Wolbachia      Pseudomonas       Raoultella         Bacillus     Dysgonomonas 
-#0.2395210        0.2155689        0.2155689        0.2035928        0.1856287        0.1676647        0.1556886        0.1437126 
-
 
 # Make a robust core by combining different definitions 
 core_overlap <- list(high = core.genus.high, med = core.genus,
@@ -2568,7 +2393,7 @@ venn_core_overlap <-  ggVennDiagram(core_overlap, label = "count", label_alpha =
 # Modify line thickness in venn diagram
 venn_core_overlap$layers[[2]]$aes_params$linewidth <- 0.2
 
-# core_overlap between definitions
+# core intersection between definitions
 # high & medium = Entomomonas & Apibacter
 # medium & low  = Acinetobacter
 # only low      = Carnobacterium & Raoultella
@@ -2640,14 +2465,13 @@ core_palette_alpha <- scales::alpha(core_palette, 0.8) # more pale
 species.genus.core.melt$genus <- factor(species.genus.core.melt$genus, levels = core_genus_abundance$genus) # order genus names by abundance
 
 core.genus.abundance <- ggplot(species.genus.core.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = F), y=Abundance, fill = genus))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = core_palette_alpha) +
   theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
   coord_flip() + labs(x="",y="genus core [%]", fill="genus core") +
   theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
+        legend.text = element_text(size = 8, face = "italic"),
         legend.key.size = unit(0.5, "cm"))
 
 
@@ -2660,24 +2484,12 @@ subfamily.merged.core.melt$genus <- factor(subfamily.merged.core.melt$genus, lev
 subfamily.merged.core.melt$host_subfamily_ordered <- factor(subfamily.merged.core.melt$Sample, levels = rev(c(subfamily_ordered)))
 
 core.genus.abundance.subfam <- ggplot(subfamily.merged.core.melt,aes(x = host_subfamily_ordered, y=Abundance, fill = genus))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3
-    ) + 
+  geom_bar( colour="black", stat="identity", linewidth=0.3  ) + 
   scale_fill_manual(values = core_palette_alpha) +
   theme_line2() + 
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = ""),limits = c(0, 1) ) + 
   coord_flip() + labs(x="",y="genus core [%]") 
   
-
-core.genus.abundance.subfam2 <- ggplot(subfamily.merged.core.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = genus))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = core_palette) +
-  theme_line2() + theme(axis.text.x = element_text(angle = 60, hjust = 1) ) +
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  labs(x="",y="genus core rel. abundance [%]")
-
-
 # Total abundance of core genus per host_subfamily
 genus_core_subfam_stats <- subfamily.merged.core.melt %>%
   group_by(Sample) %>%
@@ -2688,204 +2500,33 @@ genus_core_subfam_stats
 subfam_stats <- genus_core_subfam_stats %>%
   summarise(
     mean_total_abundance = mean(total_abundance),
-    sd_total_abundance = sd(total_abundance)
-  )
-
-
-
-#### Core family box barplot --------
-
-# Show Prevalence at 1% of top 20 taxa
-prevalence(sample.family.rel, detection = 1/100, sort = TRUE)[1:20]
-
-# core family definition detection 1.0% (0.01)  prevalence 20% (20/100),  
-core.family <- core_members(sample.family.rel, detection = 0.01, prevalence = 20/100) # 13 families
-
-# core family on genus level 
-#core.family.genus.names <- taxa_names(sample.species.rel)[tax_table(sample.species.rel)[, "family"] %in% core.family]
-#core.family.genus <- prune_taxa(core.family.genus.names, sample.species.rel)
-core.family.genus  <- subset_taxa(sample.species.rel, family %in% core.family) # same but simpler
-
-# core family on ASV level
-core.family.ASV.names <- taxa_names(sample.ASV)[tax_table(sample.ASV)[, "family"] %in% core.family]
-core.family.ASVs <- prune_taxa(core.family.ASV.names, sample.ASV)
-
-# Sum relative abundance of core taxa per sample
-core.family.genus.df <- core.family.genus %>%
-  psmelt() %>%  # convert phyloseq object to a dataframe
-  group_by(Sample, host_genus, host_family, host_subfamily, host_tribe, country) %>%
-  summarise(family_core = sum(Abundance)) 
-
-# Reorder host_genus based on mean Core_Abundance
-core.family.genus.df <- core.family.genus.df %>%
-  group_by(host_genus) %>%
-  mutate(meanfamily_core = mean(family_core))  # calculate the mean core abundance
-
-# Boxplot showing core relative abundance per host genus
-core.family.boxplot <- ggplot(core.family.genus.df, aes(x = fct_reorder(host_genus, meanfamily_core), y = family_core)) +
-  geom_boxplot() +
-  geom_point(position = position_jitter(w = 0.1, h = 0), size = 4, aes(color = host_subfamily), alpha = 0.8) +
-  theme_line2() + theme(axis.text.y = element_text(face="italic") ) + 
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  scale_colour_manual(values=subfamily_colorfix) +
-  coord_flip() + labs(x="",y="family core [%]", color = "host subfamily")
-
-core.family.boxplot.subfam <- ggplot(core.family.genus.df, aes(x = fct_reorder(host_subfamily, meanfamily_core), y = family_core)) +
-  geom_violin( draw_quantiles = c(0.5),  trim = TRUE,
-  #adjust = 1.5,         # Smoother curves (optional)
-  scale = "width" ) +      # Keep widths consistent across groups 
-  geom_point(position = position_jitter(w = 0.1, h = 0), size = 4, aes(color = host_subfamily), alpha = 0.8) +
-  theme_line2() +
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  scale_colour_manual(values=subfamily_colorfix) +
-  coord_flip() + labs(x="",y="family core [%]", color = "host subfamily")
-
-# Core family genus list
-data.frame(
-  AvgRelAbundance = sort(taxa_sums(core.family.genus) / nsamples(core.family.genus) * 100, decreasing = TRUE))
-
-
-# core family per sample
-sort(data.frame(sum = sample_sums(core.family.genus)), decreasing = T)
-
-# Core family total rel abundance all samples
-core_fam_relab <- mean(sample_sums(core.family.genus)) * 100 # percent of core family
-
-# Core family total rel abundance with SD
-family_core_sample_stats <- core.family.genus.df %>%
-  group_by(Sample) %>%
-  summarise(total_abundance = sum(family_core)) %>%
-  summarise(
-    mean_total_abundance = mean(total_abundance),
-    sd_total_abundance = sd(total_abundance)   )
-
-
-#### Core family barplot
-### Core family merged by host_genus 
-sample.family.merged.genus = merge_samples(sample.family, "host_genus")
-sample.family.merged.genus.rel <- transform_sample_counts(sample.family.merged.genus, function(x) x/sum(x))
-sample.family.merged.genus.core <- subset_taxa(sample.family.merged.genus.rel, taxa_names(sample.family.merged.genus.rel)%in%core.family)
-sample.family.merged.genus.core.melt <- psmelt(sample.family.merged.genus.core)
-
-# Calculate genus abundance for color order
-fam_abundance <- sample.family.merged.genus.core.melt %>%
-  group_by(family) %>%
-  summarise(total_abundance = sum(Abundance)) %>%
-  arrange(desc(total_abundance))  # Sort by abundance (most abundant first)
-
-corefamilyCount = length(unique(core.family))
-fam_core_palette <- setNames(taxaPalette(corefamilyCount), fam_abundance$family)  # Assign colors in the abundance order
-sample.family.merged.genus.core.melt$family <- factor(sample.family.merged.genus.core.melt$family, levels = fam_abundance$family) # order names by abundance 
-
-core.family.abundance <- ggplot(sample.family.merged.genus.core.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = F), y=Abundance, fill = family))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = fam_core_palette) +
-  theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  #scale_colour_manual(values=subfamily_color) +
-  coord_flip() + labs(x="",y="rel. ab. [%]", fill ="core families")
-
-
-### Core family merged by host_subfamily 
-sample.family.subfamily = merge_samples(sample.family, "host_subfamily")
-sample.subfamily.rel <- transform_sample_counts(sample.family.subfamily, function(x) x/sum(x))
-sample.subfamily.core <- subset_taxa(sample.subfamily.rel, taxa_names(sample.subfamily.rel)%in%core.family)
-sample.subfamily.core.melt <- psmelt(sample.subfamily.core)
-
-sample.subfamily.core.melt$family <- factor(sample.subfamily.core.melt$family, levels = fam_abundance$family) # order names by abundance 
-# rev(fam_abundance$family)) to reverse order of stacked core families, include guides(fill = guide_legend(reverse = TRUE)) # reverse legend order
-
-core.family.abundance.subfam <- ggplot(sample.subfamily.core.melt,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = F), y=Abundance, fill = family))+
-  geom_bar(#position="fill",F
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = fam_core_palette) +
-  theme_grid() +
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  coord_flip() + labs(x="",y="family core [%]") 
-
-
-#### Core family group 'nonCore' in gray
-# Melt dataset & classify families as core or non-core
-sample.subfamily.melt <- psmelt(sample.subfamily.rel) %>%
-  mutate(family_colored = ifelse(family %in% core.family, family, "nonCore")) %>%
-  group_by(Sample) %>%
-  mutate(core_abundance = sum(ifelse(family %in% core.family, Abundance, 0))) %>%  # Sum only core abundance
-  ungroup()
-
-# Set factor levels: Reverse for stacking, but keep "nonCore" last in legend
-sample.subfamily.melt$family_colored <- factor(sample.subfamily.melt$family_colored, 
-                                               levels = rev(c(fam_abundance$family, "nonCore")))
-
-# Create stacked core family plot
-core.family.abundance.others <- ggplot(sample.subfamily.melt, 
-                                       aes(x = fct_reorder(Sample, core_abundance),  
-                                           y = Abundance, 
-                                           fill = family_colored)) +
-  geom_bar(colour = "black", stat = "identity", linewidth = 0.1) + 
-  scale_fill_manual(values = c(fam_core_palette, "nonCore" = "grey70")) +  # Directly define palette
-  theme_line2() + 
-  theme(axis.text.y = element_text(face="italic")) +  
-  scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) +  
-  coord_flip() + 
-  labs(x = "", y = "core family rel. abundance [%]", fill = "core families") +
-  guides(fill = guide_legend(reverse = TRUE))  # Keep legend order correct
-
-
-
-  
-# Total abundance of top families per host_subfamily
-family_core_subfam_stats <- sample.subfamily.core.melt %>%
-    group_by(Sample) %>%
-    summarise(total_abundance = sum(Abundance)) %>%
-    summarise(
-      mean_total_abundance = mean(total_abundance),
-      sd_total_abundance = sd(total_abundance)
-    )
-  
-family_core_subfam_stats_noNymph <- sample.subfamily.core.melt %>%
-    filter(Sample != "Nymphalinae") %>%  # remove one subfamily
-    group_by(Sample) %>%
-    summarise(total_abundance = sum(Abundance)) %>%
-    summarise(
-      mean_total_abundance = mean(total_abundance),
-      sd_total_abundance = sd(total_abundance)
-    )
-  
+    sd_total_abundance = sd(total_abundance) )
 
 ggarrange.genus.core.subfamily <- ggarrange(core.genus.boxplot.subfam, core.genus.abundance.subfam, labels = c('a', 'b'),
                                   common.legend = F, legend = "right", ncol = 2,   nrow = 1, align = "h" )
 
-ggarrange.fam.core.subfamily <- ggarrange(core.family.boxplot.subfam,  core.family.abundance.subfam, labels = c('a', 'b'),
-                                common.legend = F, legend = "right", ncol = 2,   nrow = 1, align = "h" )
 
 pdf(file.path(out_dir, "01_sample_core_analysis.pdf"), width=12, height=6)
 venn_core_plot 
 venn_core_plot2
 venn_core_overlap
 genus.core
+family.core
+
 core.genus.boxplot
 core.genus.abundance
 ggarrange.genus.core.subfamily
-family.core
-core.family.boxplot
-core.family.abundance
-core.family.abundance.others
-ggarrange.fam.core.subfamily
 dev.off()
 
 
-
-
-### Core sample (threshold)  ------------
+### Core non-core abundance  ------------
 core.melt<- psmelt(core.genus.rel)
 
 # Calculate genus abundance for color order, or use core_genus_abundance$genus
 sample.core.abundance <- ggplot(core.melt %>%
                                   mutate(genus = factor(genus, levels = core_genus_abundance$genus))  # order genus names by abundance for legend 
                                 ,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = FALSE), y = Abundance, fill = genus)) +
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = core_palette) +
   theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
   coord_flip() + 
@@ -2938,7 +2579,7 @@ sample.core.filter.abundance.grid5 <- ggplot(core.filter.species.melt %>%
              scales = "free_y", space = "free", switch = "y" ) +
   scale_y_discrete(labels = setNames(core.filter.species.melt$host_genus, core.filter.species.melt$Sample)) +
   theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
+        legend.text = element_text(size = 8, face = "italic"),
         legend.key.size = unit(0.5, "cm"),
         strip.placement = "outside",
         strip.text.y.left = element_text(angle = 0),
@@ -2968,20 +2609,23 @@ noncore.filter.species.df <- noncore.filter.species.df%>%
 # noncore palette colors
 noncore.samples_labels <- setdiff(unique(noncore.filter.species.df$label), "Other")
 noncore.samplescolors <- c(setNames(noncorePalette(length(noncore.samples_labels)), noncore.samples_labels), Other = "grey70")
+noncore.samplescolors["Cedecea"] <- "#FF6B6B" # replace the dark grey manually
+
 
 # use core_noncore_sample_order
 noncore.filter.grid5 <- ggplot(noncore.filter.species.df %>%
                                  mutate(Sample = factor(Sample, levels = core_noncore_sample_order)),
                                aes(x = Abundance , y = Sample, fill = label)     ) +                     
   geom_bar(stat = "identity", colour = "black", linewidth = 0.3) +
-  scale_fill_manual(values = noncore.samplescolors) +
+  scale_fill_manual(values = noncore.samplescolors,
+    labels = function(x) ifelse(x == "Other", "Other", paste0("*", x, "*")) ) + # markdown italic to genus names
   scale_x_reverse(labels = scales::label_percent(scale = 100), limits = c(1, 0)) +
   facet_grid(host_subfamily ~ .,
              scales = "free_y", space = "free" , switch = "y") +
   scale_y_discrete(labels = setNames(noncore.filter.species.df$host_genus,  noncore.filter.species.df$Sample)) +
   theme_grid() + labs(x = "non-core [%]", y = "", fill = "non-core") +
   theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
+        legend.text = ggtext::element_markdown(size = 8), # genus names italic except 'other'
         legend.key.size = unit(0.5, "cm"),
         strip.placement = "outside",
         strip.text.y.left = element_blank(), 
@@ -3022,21 +2666,19 @@ noncore.genus.df <- noncore.genus.df %>%
          label = fct_reorder(label, Abundance, .fun = sum, .desc = TRUE), # sort taxa by total abundance  
          label = fct_relevel(label, "Other", after = Inf)) # move "Other" to end
 
-
 noncore_labels <- setdiff(unique(noncore.genus.df$label), "Other")
 #palette_colors <- taxaPalette(length(noncore_labels)+4)[5:(length(noncore_labels) + 4)] #  select from color 4 on
 noncoregenuscolors <- c(setNames(noncorePalette(length(noncore_labels)), noncore_labels), Other = "grey70")
 
 # non core genus abundance by host_genus
 noncore.genus.abundance <-  ggplot(noncore.genus.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = noncoregenuscolors) +
   theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
   coord_flip() + scale_y_reverse(labels = scales::label_percent(scale = 100, prefix = "", suffix = ""),limits = c(1, 0)) +
   labs(x="",y="non-core [%]", fill="non-core") +
   theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
+        legend.text = element_text(size = 8, face = "italic"), # all italic, also 'other'
         legend.key.size = unit(0.5, "cm"))
 
 
@@ -3050,15 +2692,15 @@ noncore.genus.df <- noncore.genus.df %>%
          label2 = fct_relevel(label2, "Other", after = Inf)) # move "Other" to end
 
 # Color based on total sample abundance (does not color biggest bars)
-noncore.genus.abundance.samplecolor <- ggplot(noncore.genus.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label2))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = noncore.samplescolors) +
+noncore.genus.abundance.samplecolor <-ggplot(noncore.genus.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label2))+
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
+   scale_fill_manual(values = noncore.samplescolors,
+    labels = function(x) ifelse(x == "Other", "Other", paste0("*", x, "*")) ) + # markdown italic to genus names
   theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
   coord_flip() + scale_y_reverse(labels = scales::label_percent(scale = 100, prefix = "", suffix = ""),limits = c(1, 0)) +
   labs(x="",y="non-core [%]", fill="non-core") +
   theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
+        legend.text = ggtext::element_markdown(size = 8), # genus names italic except 'other'
         legend.key.size = unit(0.5, "cm"))
 
 
@@ -3087,92 +2729,21 @@ palette_colors <- taxaPalette(length(noncore_labels))
 noncorecolors <- c(setNames(palette_colors, noncore_labels), Other = "grey70")
 
 noncore.genus.abundance.subfam <- ggplot(noncore.subfam.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = noncorecolors) +
   theme_grid() + #theme(axis.text.y = element_text(face="italic")) + 
   coord_flip() + scale_y_reverse(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) +
   labs(x="",y="non core [%]",fill="non-core")
 
-####  non-core family group minor by 'other' -------------
-noncore.genus.fam <- aggregate_taxa(noncore.genus, "family")
-data.frame(sort(taxa_sums(noncore.genus.fam), decreasing = TRUE)[1:30])
-noncore.genus.fam.df <- psmelt(noncore.genus.fam)
-
-# Compute top taxa family level
-top_taxa_fam <- noncore.genus.fam.df  %>%
-  group_by(family) %>%
-  summarise(mean_abund = mean(Abundance), .groups = "drop") %>%
-  arrange(desc(mean_abund)) %>%
-  slice_head(n = 10) %>%
-  pull(family)
-
-# Label and ordering, remaining groups as 'others'
-noncore.genus.fam.df  <- noncore.genus.fam.df  %>%
-  mutate(label = if_else(family %in% top_taxa_fam, as.character(family), "Other"),
-         label = fct_reorder(label, Abundance, .fun = sum, .desc = TRUE), # sort taxa by total abundance  
-         label = fct_relevel(label, "Other", after = Inf)) # move "Other" to end
-
-noncore_fam <- setdiff(unique(noncore.genus.fam.df$label), "Other")
-fam_colors <- noncorePalette(length(noncore_fam))
-noncorefamcolors <- c(setNames(fam_colors, noncore_fam), Other = "grey70")
-
-# non core genera on family level
-noncore.family.abundance <- ggplot(noncore.genus.fam.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = noncorefamcolors) +
-  theme_grid() + theme(axis.text.y = element_text(face="italic")) + 
-  coord_flip() + scale_y_reverse(labels = scales::label_percent(scale = 100, prefix = "", suffix = ""),limits = c(1, 0)) +
-  labs(x="",y="non-core [%]", fill="non-core") +
-  theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(0.5, "cm"))
-
-
-
-# non core family grouped by subfamily
-noncore.subfam.family <- aggregate_taxa(noncore.subfam, "family")
-data.frame(sort(taxa_sums(noncore.subfam.family), decreasing = TRUE)[1:30])
-noncore.subfam.family.df <- psmelt(noncore.subfam.family)
-
-# Compute top taxa family level
-top_subfam_fam <- noncore.subfam.family.df  %>%
-  group_by(family) %>%
-  summarise(mean_abund = mean(Abundance), .groups = "drop") %>%
-  arrange(desc(mean_abund)) %>%
-  slice_head(n = 10) %>%
-  pull(family)
-
-# Label and ordering, remaining groups as 'others'
-noncore.subfam.family.df  <- noncore.subfam.family.df  %>%
-  mutate(label = if_else(family %in% top_subfam_fam, as.character(family), "Other"),
-         label = fct_reorder(label, Abundance, .fun = sum, .desc = TRUE), # sort taxa by total abundance  
-         label = fct_relevel(label, "Other", after = Inf)) # move "Other" to end
-
-
-noncore_fam <- setdiff(unique(noncore.subfam.family.df$label), "Other")
-fam_colors <- noncorePalette(length(noncore_fam))
-noncorefamcolors <- c(setNames(fam_colors, noncore_fam), Other = "grey70")
-
-noncore.family.subfamily <- ggplot(noncore.subfam.family.df,aes(x = fct_reorder(Sample, Abundance, .fun = sum, .desc = TRUE), y=Abundance, fill = label))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
-  scale_fill_manual(values = noncorefamcolors) +
-  theme_grid() + #theme(axis.text.y = element_text(face="italic")) + 
-  coord_flip() + scale_y_reverse(labels = scales::label_percent(scale = 100, prefix = "", suffix = ""),limits = c(1, 0)) +
-  labs(x="",y="non-core [%]", fill="non-core taxa") +
-  theme(legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(0.5, "cm"))
 
 pdf(file.path(out_dir, "01_sample_core_noncore.pdf"), width=12, height=6)
+sample.core.abundance
+sample.core.filter.abundance.grid5
+noncore.filter.grid5
 single.sample.noncore.abundance 
 noncore.genus.abundance
 noncore.genus.abundance.samplecolor
 noncore.genus.abundance.subfam
-noncore.family.abundance
-noncore.family.subfamily
 dev.off()
 
 rm(single.sample.noncore.abundance)
@@ -3184,12 +2755,6 @@ sink(file.path(out_dir, "01_sample_core_analysis.txt"))
 as.data.frame(genus_core_sample_stats)
 "genus_core_subfam_stats" 
 as.data.frame(genus_core_subfam_stats)
-"family_core_sample_stats"
-as.data.frame(family_core_sample_stats)
-"family_core_subfam_stats"
-as.data.frame(family_core_subfam_stats)
-"family_core_subfam_stats_noNymph"
-as.data.frame(family_core_subfam_stats_noNymph)
 sink()
 
 
@@ -3231,20 +2796,6 @@ location.rich  <- plot_richness(sample.species,x="location", measures=c("Shannon
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
   ggtitle("sample.species location") + scale_color_manual(values = subfamily_colorfix) 
 
-sublocation.country.rich  <- plot_richness(sample.species,x="sublocation", measures=c("Shannon")) +
-  geom_boxplot(aes(group = sublocation)) +
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_subfamily),alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
-  ggtitle("sample.species country sublocation") + scale_color_manual(values = subfamily_colorfix) +
-  facet_wrap(~ country, scales = "free_x")
-
-genus.country.rich  <- plot_richness(sample.species,x="host_genus", measures=c("Shannon")) +
-  geom_boxplot(aes(group = host_genus)) +
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_subfamily),alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1) ) + 
-  ggtitle("sample.species country host") + scale_color_manual(values = subfamily_colorfix) +
-  facet_wrap(~ country, scales = "free_x")
-
 sample.rich.time  <- plot_richness(sample.species,x="kw", measures=c("Shannon","Observed","InvSimpson")) +
   theme_line2()+ geom_point(size=4, aes(color=host_subfamily)) + 
   stat_smooth(method="lm", color="black", linewidth=0.5,se=T) + 
@@ -3259,8 +2810,6 @@ species.rich
 family.rich
 country.rich
 location.rich
-sublocation.country.rich
-genus.country.rich 
 sample.rich.time
 dev.off()
 
@@ -3269,9 +2818,15 @@ dev.off()
 df.sample <- as(sample_data(sample.species), "data.frame") %>%
   rownames_to_column("Sample")
 
-df.core <- data.frame(
-  Sample = sample_names(core.genus.rel),
-  genus_core = sample_sums(core.genus.rel))
+# Add core data
+all(df.sample$Sample %in% names(sample_sums(core.genus.rel))) # check if true before left_join
+all(names(sample_sums(core.genus.rel)) %in% df.sample$Sample) # check if true before left_join
+df.sample$genus_core <- sample_sums(core.genus.rel)[df.sample$Sample]
+
+# Add or rename other variables
+df.sample$temperature <- df.sample$temp_week
+df.sample$time        <- df.sample$kw
+df.sample$host_subfamily_ordered <- factor(df.sample$host_subfamily, levels = subfamily_ordered)
 
 #df.alpha <- estimate_richness(sample.species, measures = c("Shannon", "Observed", "InvSimpson")) %>%   rownames_to_column("Sample")
 # replace estimate_richness by microbiome package
@@ -3287,27 +2842,15 @@ df.alpha <- microbiome::alpha(sample.species) %>%
 
 ### New alphaframe simplify data frame for statistics 
 alphaframe <- df.sample %>%
-  left_join(df.core, by = "Sample") %>%
-  left_join(df.alpha, by = "Sample")
-
-
-alphaframe$time <- alphaframe$kw
-alphaframe$temperature <- alphaframe$temp_week
-alphaframe$host_subfamily_ordered <- factor(alphaframe$host_subfamily, levels = subfamily_ordered)
-#alphaframe$group <- alphaframe$host_subfamily # if there is no group defined
-
+  left_join(df.alpha, by = "Sample") 
+ 
+rownames(alphaframe) <- alphaframe$Sample  # restore rownames after left_join
 
 # adjust variables if necessary
-rownames(alphaframe) <- alphaframe$Sample
 rownames(alphaframe)
 head(alphaframe)
 class(alphaframe)
 str(alphaframe) # variables can be converted as.numeric or as.factor
-# use time point as.factor only for figure color
-# use time point as integer for statistics
-#alphaframe$host_genus <- as.factor(alphaframe$host_genus)
-#alphaframe$kw <- as.numeric(alphaframe$kw)
-#alphaframe$group <- factor(df.sample$group, levels = c("t0", "t1", "t2", "t3"))
 
 # Quick correlations
 pairs(alphaframe[, c("Shannon",  "Observed", "InvSimpson", "temperature",  "time", "log16S" , "weight")])
@@ -3333,33 +2876,6 @@ alpha.overview <- ggplot(alphaframe_long, aes(x = host_subfamily_ordered, y = Va
   
 
 # alphaframe figures
-alpha.shannon  <- ggplot(alphaframe, aes(x=host_subfamily_ordered, y=Shannon)) +
-  geom_boxplot(aes(group = host_subfamily))+
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_colour_manual(values=subfamily_colorfix) +
-  labs(x="",y="Shannon diversity", color = "host subfamily") +
-  facet_wrap(~ host_family, scales = "free_x") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
-
-alpha.rich  <- ggplot(alphaframe, aes(x=host_subfamily_ordered, y=Observed)) +
-  geom_boxplot(aes(group = host_subfamily))+
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_colour_manual(values=subfamily_colorfix) +
-  labs(x="",y="microbial richness") 
-
-alpha.rich.tribe  <- ggplot(alphaframe, aes(x=host_subfamily_ordered, y=Observed)) +
-  geom_boxplot(aes(group = host_subfamily))+
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_tribe, shape = country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_colour_manual(values=tribe_colorfix) +
-  labs(x="",y="microbial richness") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
 
 alpha.rich.tribe.sort  <- ggplot(alphaframe, aes(x = fct_reorder(host_tribe, Observed, .fun = median, na.rm = TRUE), y=Observed)) +
   geom_boxplot(aes(group = host_tribe))+
@@ -3389,6 +2905,8 @@ alpha.shannon2  <- ggplot(alphaframe, aes(x=Shannon, y=host_subfamily_ordered)) 
 alpha.shannon.tribe.sort <- ggplot(alphaframe, aes(x = fct_reorder(host_tribe, Shannon, .fun = median, na.rm = TRUE), y=Shannon)) +
   geom_boxplot(aes(group = host_tribe))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape = country), alpha = 0.8) +
+  stat_summary(fun.data = function(x) data.frame(y = 0.1, label = paste0("n = ", length(x))), geom = "text",
+              aes(group = host_tribe), vjust = 0.2, size = 3 ) + # ad sample size (n) to plot
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
   scale_colour_manual(values=subfamily_colorfix) +
   labs(x="",y="Shannon diversity") +
@@ -3413,6 +2931,7 @@ alpha.subfamily.country  <- ggplot(alphaframe %>% filter(host_subfamily != "Dana
   #geom_violin(aes(group = country), draw_quantiles = c(0.5), trim = T,  scale = "width")+ # scale = "width" for equal width
   geom_boxplot(aes(group = country), outlier.shape = NA)+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape=country), alpha = 0.8) +
+  geom_text(data = quant_facet_n, aes(x = country, y = 0, label = label), inherit.aes = FALSE, vjust = -0.2, size = 3) +
   theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
   scale_colour_manual(values=subfamily_colorfix) +
   labs(x="",y="Shannon diversity", color="host subfamily") +
@@ -3422,84 +2941,19 @@ alpha.subfamily.country  <- ggplot(alphaframe %>% filter(host_subfamily != "Dana
     shape = guide_legend(order = 2) )
 
 
-alpha.location  <- ggplot(alphaframe, aes(x=location, y=Shannon)) +
-  geom_boxplot(aes(group = location))+
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color=host_subfamily, shape=country), alpha = 0.8) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  scale_colour_manual(values=subfamily_colorfix) +
-  labs(x="",y="Shannon diversity", color ="host subfamily") +
-  facet_wrap(~ host_subfamily, scales = "free_x") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
 
 
 pdf(file.path(out_dir, "02_sample_div_alphaframe_groups.pdf"), width=12, height=6)
 alpha.overview
-alpha.shannon
-alpha.rich
-alpha.rich.tribe
 alpha.rich.tribe.sort
 alpha.shannon2
 alpha.shannon.tribe.sort
 alpha.shannon.country
 alpha.subfamily.country 
-alpha.location
 dev.off()
 
 
 #### alphaframe stats lm Shannon -------------
-
-# Statistic notes: Quick plot data groups that will be tested
-boxplot(alphaframe$Shannon ~ alphaframe$group) # chr
-plot(alphaframe$Shannon ~ alphaframe$kw) # integer
-
-# Quick test for 'group'
-summary(aov(alphaframe$Shannon ~ alphaframe$group))
-TukeyHSD(aov(alphaframe$Shannon ~ alphaframe$group)) 
-anova(lm(Shannon ~ group, data=alphaframe))
-oneway.test(alphaframe$Shannon ~ alphaframe$group)
-kruskal.test(alphaframe$Shannon ~ alphaframe$group)
-pairwise.wilcox.test(alphaframe$Shannon, alphaframe$group, p.adjust="BH")
-
-# Check normal distribution of data
-#hist(alphaframe$Shannon)
-
-# Bartlett test of homogeneity of variances (too sensitive)
-bartlett.test(Shannon ~ group, data=alphaframe)
-# Fligner-Killeen’s test of homogeneity of variances (less sensitive)
-fligner.test(Shannon ~ group, data=alphaframe)
-# Levene's Test for homogeneity of variances (needs 'library(car)')
-leveneTest(Shannon ~ group, data=alphaframe)
-
-# optional Welch’s ANOVA (robust to unequal variance)
-oneway.test(Shannon ~ group, data = alphaframe, var.equal = FALSE)
-
-# Alternative kruskal Wallis test with pairwise Wilcox test
-kruskal.test(Shannon ~ host_subfamily, data = alphaframe)
-pairwise.wilcox.test(alphaframe$Shannon, alphaframe$host_subfamily, p.adjust="BH")
-
-# Two sample Wilcox test
-wilcox.test(Shannon ~  country, data = alphaframe)
-t.test(Shannon ~  country, data = alphaframe)
-
-# Illustrate 2 way test design for two way anova
-#boxplot(Shannon ~ group1 * group2, data=alphaframe, frame = FALSE, 
-#        col = c("#00AFBB", "#E7B800"), ylab="Shannon")
-
-# In case of violation of normality, transform data, check distribution
-hist(alphaframe$Shannon)
-hist(sqrt(alphaframe$Shannon))
-hist(log(alphaframe$Shannon))
-bartlett.test(Shannon ~ group, data=alphaframe)
-bartlett.test(sqrt(Shannon) ~ group, data=alphaframe)
-bartlett.test(log(Shannon) ~ group, data=alphaframe)
-fligner.test(Shannon ~ group, data=alphaframe)
-fligner.test(sqrt(Shannon) ~ group, data=alphaframe)
-fligner.test(log(Shannon) ~ group, data=alphaframe)
-# if necessary transform data in dataframe
-#alphaframe <- mutate(alphaframe, sqrtshannon = sqrt(Shannon))
-
 
 ## For Shannon diversity use lm/aov or lmer, but not glm or glmer.
 boxplot(alphaframe$Shannon ~ alphaframe$host_subfamily) 
@@ -3542,19 +2996,30 @@ as.data.frame(lm.results.summary)
 # Main effect of host taxonomy followed by location
 
 # Multivariate tests: Shannon, combine taxonomy with location
-lm.comb1 <- lm(Shannon ~ host_subfamily + location, data = alphaframe)
-lm.comb2 <- lm(Shannon ~ host_subfamily + location + temperature, data = alphaframe)
-lm.comb3 <- lm(Shannon ~ host_tribe + location, data = alphaframe)
-lm.comb4 <- lm(Shannon ~ host_tribe + location + temperature , data = alphaframe)
-lm.comb5 <- lm(Shannon ~ host_genus + location  , data = alphaframe)
-lm.comb6 <- lm(Shannon ~ host_genus + location + temperature , data = alphaframe)
-lm.comb7 <- lm(Shannon ~ host_subfamily + sublocation , data = alphaframe)
-lm.comb8 <- lm(Shannon ~ host_tribe + sublocation , data = alphaframe)
-lm.comb9 <- lm(Shannon ~ host_tribe + country , data = alphaframe)
-lm.comb10 <- lm(Shannon ~ host_subfamily + country , data = alphaframe)
+predictors_multi <- list(
+  "host_subfamily + location", "host_subfamily + location + temperature",
+  "host_tribe + location", "host_tribe + location + temperature",
+  "host_genus + location", "host_genus + location + temperature",
+   "host_subfamily + country", "host_tribe + country" )
 
-AIC(lm.comb1,lm.comb2,lm.comb3,lm.comb4,lm.comb5, lm.comb6, lm.comb7, lm.comb8, lm.comb9, lm.comb10 )
+lm.multi.summary <- map_dfr(predictors_multi, function(f) {
+  mod <- lm(as.formula(paste("Shannon ~", f)), data = alphaframe)
+  s <- summary(mod)
+  fstat <- s$fstatistic
+  tibble(
+    formula = f,
+    F_value = unname(fstat[1]),
+    p_value = pf(fstat[1], fstat[2], fstat[3], lower.tail = FALSE),
+    R2_adj  = s$adj.r.squared,
+    AIC     = AIC(mod)
+  )
+}) %>%
+  arrange(AIC)
+
+# Show results as list 
+as.data.frame(lm.multi.summary)
 # subfamily + location better than 3 predictors
+
 
 # For univariate tests with host genus
 # Robustness Check against over fitting  (filter genus with ≥2 samples)
@@ -3718,7 +3183,7 @@ Anova(lm.shannon.subfam.location, type=2)
 partial_R2_sub_loc
 cat("\n")  # blank line
 "Shannon host tribe + country"
-summary(lm.shannon.tribe.country)$adj.r.squared # 0.3230627
+summary(lm.shannon.tribe.country)$adj.r.squared
 Anova(lm.shannon.tribe.country, type=2)
 partial_R2_tribe_country
 cat("\n")  # blank line
@@ -3729,11 +3194,8 @@ summary(lm.shannon.pierinae)
 summary(lm.shannon.heliconiinae)
 sink()
 
-
-
 #### alpha split country Peru / Germany---------------
 alphaframe.Peru <- subset(alphaframe, country == "Peru")
-
 
 # high correlation temp and elevation
 lm.temp.el <- lm(temperature ~ elevation , data = alphaframe.Peru)
@@ -3846,26 +3308,7 @@ kw.temp <- ggplot(alphaframe.Germany, aes(x = kw, y = temperature)) +
   scale_color_manual(values = subfamily_colorfix) +
   labs(x="Calendar week",y="Temperature [°C]",
        color = "host subfamily") 
-  
 
-
-shannon.kw.Germany.noAglais <-
-  ggplot(alphaframe.Germany.noAglais, aes(x = kw, y = Shannon)) +
-  theme_line2() + 
-  geom_point(size = 4, alpha = 0.8, aes(color=host_subfamily)) +
-  #stat_smooth(data = alphaframe.Germany.noAglais, method="auto", color="black", linewidth=0.5,se=T) +
-  geom_smooth(method = "lm", color = "black", linewidth = 0.5, se = TRUE) +
-  stat_regline_equation(label.y = 4.0, aes(label = after_stat(rr.label)),size=3) + stat_cor(label.y = 3.7 ,size=3, p.accuracy = 0.00001) +
-  geom_point(data = alphaframe.Germany.Aglais, aes(x = kw, y = Shannon, shape = "Aglais", fill=host_subfamily), color="black", stroke = 1, size = 4) +
-  scale_shape_manual(values = c("Aglais" = 21)) +
-  scale_color_manual(values = subfamily_colorfix) +
-  scale_fill_manual(values = subfamily_colorfix, guide = "none") + # guide hide second legend
-  labs(x="Calendar week",y="Shannon diversity",
-           color = "host subfamily", shape = "excluded outgroup", subtitle="Germany samples" ) +
-  coord_cartesian(ylim = c(0, 4), expand = TRUE,  default = FALSE,   clip = "on" ) +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
 
 shannon.kw.Germany.noAglais2 <- ggplot(alphaframe.Germany.noAglais, aes(x = kw, y = Shannon)) +
   theme_line2() + 
@@ -3935,7 +3378,6 @@ alpha.elevation.Peru
 sample.shannon.elevation.Peru
 sample.rich.elevation.Peru
 sample.shannon.temp.Peru 
-shannon.kw.Germany.noAglais
 shannon.kw.Germany.noAglais2
 dev.off()
 
@@ -3957,8 +3399,6 @@ summary(lm.shannon.kw.subfam)$adj.r.squared
 Anova(lm.shannon.kw.subfam, type=2)
 partial_R2_Ger_sub_kw
 sink()
-
-
 
 
 #### alpha shannon temp / core  ----
@@ -4179,15 +3619,6 @@ temp.16Scopy <- ggplot(alphaframe, aes(x = temperature, y = log16S )) +
 
 
 #### alpha shannon core 
-core.shannon.auto <- ggplot(alphaframe, aes(x = genus_core, y = Shannon )) +
-  theme_line2() + 
-  geom_point(size = 4, alpha = 0.8, aes(color=host_subfamily)) +
-  geom_smooth(method = "auto", color = "black", linewidth = 0.5, se = TRUE) +
-  #stat_regline_equation(label.y = 0.4, aes(label = after_stat(rr.label)),size=3) + # only for lm
-  #stat_cor(label.y = 0.6,size=3, p.accuracy = 0.001) + # pearson assumes a linear relationship
-  stat_cor(method = "spearman", label.y = 0.6, size = 3, p.accuracy = 0.001) + # Spearman rank correlation Non-parametric not necessarily linear
-  labs(x="genus core [%]",y="Shannon diversity", title="", color="host subfamily" ) +
-  scale_colour_manual(values=subfamily_colorfix)
 
 lm.quad <- lm(Shannon ~ poly(genus_core, 2) , data=alphaframe) # quadratic fit 
 summary(lm.quad)
@@ -4217,19 +3648,6 @@ core.shannon <- ggplot(alphaframe, aes(x = genus_core, y = Shannon )) +
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2) )
 
-
-core.shannon.temp <- ggplot(alphaframe, aes(x = genus_core, y = Shannon )) +
-  theme_line2() + 
-  geom_point(alpha = 0.8, aes(color=host_subfamily, size=temperature)) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2),  color = "black", linewidth = 0.5, se = TRUE) +
-  stat_regline_equation(formula = y ~ poly(x, 2), label.y = 0.4, aes(label = after_stat(rr.label)),size=3) +
-  annotate("text", x = 0.0, y = 0.2, label = label_text, size = 3, hjust = 0, parse = TRUE) +
-  labs(x="genus core [%]",y="Shannon diversity", title="", color="host subfamily" ) +
-  scale_colour_manual(values=subfamily_colorfix) +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
-
 core.shannon.abund <- ggplot(alphaframe, aes(x = genus_core, y = Shannon )) +
   theme_line2() + 
   geom_point(alpha = 0.8, aes(color=host_subfamily, size=log16S, shape=country)) +
@@ -4241,10 +3659,8 @@ core.shannon.abund <- ggplot(alphaframe, aes(x = genus_core, y = Shannon )) +
   labs(x="genus core [%]",y="Shannon diversity", title="", color="host subfamily" , size="log10 16S copies" ) +
   scale_colour_manual(values=subfamily_colorfix) +
   guides(
-    color = guide_legend(order = 1,override.aes = list(size = 3)), # manual legend order
+    color = guide_legend(order = 1,override.aes = list(size = 4)), # manual legend order
     shape = guide_legend(order = 2,override.aes = list(size = 3)) )
-
-
 
 # final model core + 16S explain Shannon with quadratic relationship
 lm.shannon.core.log16S <- lm(Shannon ~ poly(genus_core, 2) + poly(log16S, 2), data = alphaframe)
@@ -4265,9 +3681,7 @@ temp.shannon.noAglais2
 temp.InvSimpson.noAglais2 
 temp.observed_subfamily 
 temp.16Scopy 
-core.shannon.auto 
 core.shannon 
-core.shannon.temp 
 core.shannon.abund
 dev.off()
 
@@ -4301,7 +3715,7 @@ anova(lm.quad)
 sink()
 
 
-## 02 sample div beta (NMDS) -------------------
+## 03 sample div beta (NMDS) -------------------
 
 # ASV-level
 # sample.ASV       #sample.ASV.rel    #LT removed (samples only) ASV level
@@ -4310,13 +3724,7 @@ sink()
 # genus-level
 # sample.species   #sample.species.rel #LT removed (samples only) genus level
 
-# family-level
-# sample.family    #sample.family.rel
-
-
 sample.nmds <- ordinate(sample.species.rel, method="NMDS",distance = "bray", k=3, trymax=200)
-sample.nmds.ASV <- ordinate(sample.ASV.rel, method="NMDS",distance = "bray", k=3, trymax=200)
-# sample.nmds.family <- ordinate(sample.family.rel, method="NMDS",distance = "bray", k=3, trymax=200)
 
 # Check goodness of fit with Shepards diagram
 #stressplot(sample.nmds)
@@ -4326,62 +3734,26 @@ sample.nmds.stress
 # dimensions: 3 Stress:     0.214 # better with 3 dimensions
 # NMDS stress level 0.05	Excellent, 0.05–0.1 Good, 0.1–0.2 Fair, 0.2–0.3 Weak, > 0.3 Very poor
 
-# NMDS
-nmds.ASV <- plot_ordination(sample.ASV.rel,sample.nmds.ASV, color="host_subfamily", shape="country")+
-  geom_point(size=4) + theme_grid() + stat_ellipse(aes(group = country))  +  ggtitle("sample.nmds.ASV"  )
-nmds.species <- plot_ordination(sample.species.rel,sample.nmds, color="host_subfamily", shape="country")+
-  geom_point(size=4) + theme_grid() + stat_ellipse(aes(group = factor(country))) +  ggtitle("sample.nmds.species" ) +
-  annotate("text", x = Inf, y = -Inf, label = paste("Stress =", sample.nmds.stress), 
-           hjust = 1.1, vjust = -0.5, size = 4)
-
-# NMDS parameter
-#sample_data(sample.species.rel)$weight <- as.numeric(as.character(sample_data(sample.species.rel)$weight))
-sample_data(sample.species.rel)$year <- as.factor(sample_data(sample.species.rel)$year)
-
-nmds.subfamily <- plot_ordination(sample.species.rel,sample.nmds, color="host_tribe", shape="year")+
-  geom_point(size=4) + theme_grid() + facet_wrap(~host_subfamily)
-
 #### beta div plots (NMDS) binder 
 # combine NMDS sites with data frame to include custom alpha levels in figure
 scores(sample.nmds)$sites
-rownames(scores(sample.nmds)$sites) == row.names(sample_data(sample.species.rel)) # check if true before cbind
-nmds.binder <- cbind(scores(sample.nmds)$sites,sample_data(sample.species.rel))
+#rownames(scores(sample.nmds)$sites) == row.names(sample_data(sample.species.rel)) # check if true before cbind
+#nmds.binder <- cbind(scores(sample.nmds)$sites,sample_data(sample.species.rel))
 
-nmds.binder$samplesum <- sample_sums(sample.species)
-nmds.binder$logsum <- log10(sample_sums(sample.species))
-nmds.binder$rich <- estimate_richness(sample.species, measures=c("Observed", "InvSimpson", "Shannon"))
-nmds.binder$Actinobacteria <- sample_sums(subset_taxa(sample.species.rel, phylum=="Actinobacteria" ))
-nmds.binder$entero <- sample_sums(subset_taxa(sample.species.rel, order=="Enterobacterales" ))
-nmds.binder$familycore <- sample_sums(core.family.genus)
-nmds.binder$genuscore <- sample_sums(core.genus.rel)
-nmds.binder$LT7000 <- ifelse(sample_sums(sample.species) > 7000, 'HT', 'LT7000')
-nmds.binder$LT5000 <- ifelse(sample_sums(sample.species) > 5000, 'HT', 'LT5000')
-nmds.binder$LT3000 <- ifelse(sample_sums(sample.species) > 3000, 'HT', 'LT3000')
+nmds.scores <- scores(sample.nmds)$sites %>%
+  as.data.frame() %>%
+  rownames_to_column("Sample")
 
-#str(nmds.binder)
+all(df.sample$Sample %in% nmds.scores$Sample) # check if true before left_join
 
-NMDS.binder.shannon.logsum <- ggplot(nmds.binder, aes(x=NMDS1,y=NMDS2,shape=LT5000, color=rich$Shannon, size=logsum))+
-  stat_ellipse(linewidth=1, alpha=0.8, aes(group = factor(country))) +
-  geom_point( alpha=0.8)+
-  theme(plot.title =element_text(size=10, face='bold')) +
-  scale_colour_viridis_c(direction = 1) +
-  theme_grid() #+ labs(title="sample.species") +labs(color="Shannon")
-  facet_wrap(~country)
+nmds.binder <- df.sample %>%             # for clean start join with df.sample
+  left_join(df.alpha, by = "Sample") %>% # ad alpha div
+  left_join(nmds.scores, by = "Sample")  # ad beta  div
 
-NMDS.binder.wrap.shannon <-
-  ggplot(nmds.binder , aes(x=NMDS1,y=NMDS2,color=rich$Shannon, shape=LT5000, size=Actinobacteria))+
-  #stat_ellipse(linewidth=1, alpha=0.5 ) +
-  geom_point( alpha=0.8)+
-  theme(plot.title =element_text(size=10, face='bold')) +
-  scale_colour_viridis_c(direction = 1) + facet_wrap(~country) +
-  theme_grid() #labs(title="all time points") +labs(color="sampling\ntime point") +
-
-NMDS.binder.genuscore <- ggplot(nmds.binder, aes(x=NMDS1,y=NMDS2, color=genuscore))+
-  stat_ellipse(linewidth=1, alpha=0.8, aes(group = factor(host_tribe))) +
-  geom_point( alpha=0.8)+
-  theme(plot.title =element_text(size=10, face='bold')) +
-  scale_colour_viridis_c(direction = -1) +
-  theme_grid() + facet_wrap(~country) + geom_label(aes(label = sampleID), size = 3)
+# Set rownames to Sample, keep Sample column for left_join
+rownames(nmds.binder) <- nmds.binder$Sample 
+rownames(nmds.binder)
+head(nmds.binder)
 
 NMDS.binder.subfamily <- ggplot(nmds.binder, aes(x=NMDS1,y=NMDS2))+
   stat_ellipse(level = 0.9, linewidth = 1, aes(group = host_subfamily, color = host_subfamily)) +
@@ -4412,13 +3784,8 @@ NMDS.binder.genus.wrap <- ggplot(nmds.binder, aes(x=NMDS1,y=NMDS2))+
   theme_grid()
 
 
-pdf(file.path(out_dir, "02_sample_div_beta_NMDS_binder.pdf"), width=8, height=8)
-nmds.ASV
-nmds.species
-nmds.subfamily
-NMDS.binder.shannon.logsum
-NMDS.binder.wrap.shannon
-NMDS.binder.genuscore
+pdf(file.path(out_dir, "03_sample_div_beta_NMDS_binder.pdf"), width=8, height=8)
+NMDS.binder.subfamily
 NMDS.binder.tribe
 NMDS.binder.tribe.wrap
 NMDS.binder.genus.wrap
@@ -4426,60 +3793,29 @@ dev.off()
 
 
 
-# 02 sample div beta (PCoA)  ------------------
+# 03 sample div beta (PCoA)  ------------------
 sample.PCoA <- ordinate(sample.species.rel, method="PCoA",distance = "bray")
-sample.PCoA.ASV <- ordinate(sample.ASV.rel, method="PCoA",distance = "bray")
-# sample.PCoA.family <- ordinate(sample.family.rel, method="PCoA",distance = "bray")
 
 # Check variance explained PCoA
 explained <- sample.PCoA$values$Relative_eig
 round(explained[1:5] * 100, 2) 
-
-# PCoA
-PCoA.ASV <- plot_ordination(sample.ASV.rel,sample.PCoA.ASV, color="host_subfamily", shape = "country")+
-  geom_point(size=4)+theme_grid() + stat_ellipse(aes(group = country)) +    ggtitle("sample.PCoA.ASV"  )
-
-PCoA.species <- plot_ordination(sample.species.rel,sample.PCoA, color="host_subfamily", shape = "country")+
-  geom_point(size=4)+theme_grid() + stat_ellipse(aes(group = country))  +  ggtitle("sample.PCoA.species"  )
-
-# PCoA parameter
-sample.PCoA.genus <- plot_ordination(sample.species.rel,sample.PCoA, color="host_genus", shape = "country")+
-  geom_point(size=4)+theme_grid() + stat_ellipse(aes(group = country)) 
-sample.PCoA.subfamily <- plot_ordination(sample.species.rel,sample.PCoA, color="host_subfamily", shape = "country")+
-  geom_point(size=4)+theme_grid() + stat_ellipse(aes(group = host_subfamily))
-sample.PCoA.location <- plot_ordination(sample.species.rel,sample.PCoA, color="host_tribe", shape = "country")+
-  geom_point(size=4)+theme_grid() + facet_wrap(~location)
-sample.PCoA.species <- plot_ordination(sample.species.rel,sample.PCoA, shape = "country")+
-  geom_point(size=4, aes(color = host_species))+theme_grid() + stat_ellipse(aes(group = country)) +
-  scale_color_manual(values = species_colorfix) 
-
-
-# simple plot_ordination PCoA plots
-pdf(file.path(out_dir, "02_sample_div_beta_PCoA.pdf"), width=12, height=6)
-PCoA.ASV
-PCoA.species
-sample.PCoA.genus
-sample.PCoA.subfamily
-sample.PCoA.location 
-sample.PCoA.species
-dev.off()
-
 
 #### beta div plots (PCoA) binder
 # Export pcoa scores 
 pcoa_scores_3 <- as.data.frame(sample.PCoA$vectors[, 1:3]) %>%
   rownames_to_column("Sample")
 
-all(df.sample$Sample %in% df.core$Sample) # check if true before left_join
-all(df.core$Sample %in% df.sample$Sample) # check if true before left_join
+all(df.sample$Sample %in% pcoa_scores_3$Sample) # check if true before left_join
+all(pcoa_scores_3$Sample %in% df.sample$Sample) # check if true before left_join
 
 # Combine with sample data and core data into pcoa.binder # left_join better than cbind
-pcoa.binder <- df.sample %>% 
-  left_join(pcoa_scores_3, by = "Sample") %>%
-  left_join(df.core, by = "Sample")
+pcoa.binder <- df.sample %>%             # for clean start join with df.sample
+  left_join(df.alpha, by = "Sample") %>% # ad alpha div
+  left_join(pcoa_scores_3, by = "Sample")  # ad beta  div
 
 # Set rownames to Sample, keep Sample column for left_join
 rownames(pcoa.binder) <- pcoa.binder$Sample
+head(pcoa.binder)
 
 axes_var <- sample.PCoA$values$Relative_eig * 100 # Export axis % variation 
 xlab_pcoa1 <- paste0("PCoA1 (", round(axes_var[1], 1), "%)")
@@ -4497,22 +3833,6 @@ PCoA.host.overview  <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2) )
 
-PCoA.axis13  <- ggplot(pcoa.binder, aes(Axis.1, Axis.3)) +
-  stat_ellipse(level = 0.9, linewidth = 0.7, alpha = 0.5, aes(group = host_subfamily, color = host_subfamily)) +
-  geom_point(size = 5, aes(shape = country, color = host_subfamily), alpha = 0.8) +
-  facet_wrap(~host_family) +
-  scale_colour_manual(values = subfamily_colorfix) +
-  labs(x = xlab_pcoa1, y = ylab_pcoa3) +
-  theme_grid()
-
-PCoA.axis23  <- ggplot(pcoa.binder, aes(Axis.2, Axis.3)) +
-  stat_ellipse(level = 0.9, linewidth = 0.7, alpha = 0.5, aes(group = host_subfamily, color = host_subfamily)) +
-  geom_point(size = 5, aes(shape = country, color = host_subfamily), alpha = 0.8) +
-  facet_wrap(~host_family) +
-  scale_colour_manual(values = subfamily_colorfix) +
-  labs(x = ylab_pcoa2, y = ylab_pcoa3) +
-  theme_grid()
-
 PCoA.host.overview.tribe  <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
   stat_ellipse(type = "t",level = 0.9, linewidth = 0.7, alpha = 0.5, aes(group = host_tribe, color = host_tribe),show.legend = FALSE) +
   geom_point(size = 4, aes(shape = country, color = host_tribe), alpha = 0.8) +
@@ -4523,7 +3843,6 @@ PCoA.host.overview.tribe  <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
   guides(
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2)) 
-
 
 PCoA.subfamily.wrap  <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
   stat_ellipse(level = 0.9, linewidth = 0.7, alpha = 0.5, aes(group = host_subfamily, color = host_tribe)) +
@@ -4550,27 +3869,28 @@ pcoa.binder <- pcoa.binder %>%
 
 genus_level_order <- sort(unique(pcoa.binder$host_genus_grouped))
 genus_level_order <- c(setdiff(genus_level_order, "unique genera"), "unique genera")
-pcoa.binder$host_genus_grouped <- factor(pcoa.binder$host_genus_grouped, levels = genus_level_order)
+pcoa.binder <- pcoa.binder %>%
+  mutate(host_genus_grouped = factor(host_genus_grouped, levels = genus_level_order, 
+    labels = ifelse(genus_level_order == "unique genera", "unique genera", paste0("*", genus_level_order, "*")) ))
 
-# genus wrap with grouped genera
-PCoA.genus.wrap <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
-  stat_ellipse(level = 0.9,  alpha = 0.5, aes(group = host_subfamily, color = host_subfamily)) +
-  geom_point(size=4, alpha = 0.8, aes(shape = country, color = host_subfamily)) + 
-  facet_wrap(~host_genus_grouped) +
-  scale_color_manual(values = subfamily_colorfix) +
-  labs(x = xlab_pcoa1, y = ylab_pcoa2) + theme_grid() #+ geom_label(aes(label = sampleID), size = 4) 
-  
-PCoA.genus.wrap.tribe <- ggplot(pcoa.binder, aes(Axis.1, Axis.2), color = host_tribe)+
+# replicate per genus label
+facet_n <- pcoa.binder %>%
+  group_by(host_genus_grouped) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  mutate(label = paste0("n = ", n))
+
+PCoA.genus.wrap.tribe <-  ggplot(pcoa.binder, aes(Axis.1, Axis.2), color = host_tribe)+
   stat_ellipse(linewidth = 0.7, alpha = 0.5, aes(group = host_genus, color = host_tribe))  + 
   geom_point(size=4, alpha = 0.8, aes(shape = country, color = host_tribe)) +
-  facet_wrap(~host_genus_grouped) + # , ncol = 4
+  facet_wrap(~host_genus_grouped) + 
   scale_color_manual(values = tribe_colorfix) +
   labs(x = xlab_pcoa1, y = ylab_pcoa2) +
+  geom_text(data = facet_n, aes(x = Inf, y = Inf, label = label),
+            inherit.aes = FALSE, hjust = 1.2, vjust = 1.5, size = 3) +
   guides(
     color = guide_legend(order = 1), # manual legend order
     shape = guide_legend(order = 2)) +
-  theme_grid()
-
+  theme_grid() + theme(strip.text = ggtext::element_markdown())
 
 PCoA.host.country  <- ggplot(pcoa.binder, aes(Axis.1, Axis.2)) +
   stat_ellipse(level = 0.9, linewidth = 0.5, aes(group = country)) +
@@ -4593,14 +3913,11 @@ pcoa.binder.core <-
   scale_size_continuous(range = c(2, 10))
   
 
-pdf(file.path(out_dir, "02_sample_div_beta_PCoA_binder.pdf"), width=12, height=6)
+pdf(file.path(out_dir, "03_sample_div_beta_PCoA_binder.pdf"), width=12, height=6)
 PCoA.host.overview
-PCoA.axis13
-PCoA.axis23
 PCoA.host.overview.tribe
 PCoA.subfamily.wrap
 PCoA.tribe.wrap 
-PCoA.genus.wrap
 PCoA.genus.wrap.tribe
 PCoA.host.country 
 pcoa.binder.core 
@@ -4632,51 +3949,27 @@ betaframe$beta_tribe     <- beta_tribe$distances[match(betaframe$Sample, names(b
 betaframe$beta_genus     <- beta_genus$distances[match(betaframe$Sample, names(beta_genus$distances))]
 betaframe$beta_country   <- beta_country$distances[match(betaframe$Sample, names(beta_country$distances))]
 betaframe$beta_location  <- beta_location$distances[match(betaframe$Sample, names(beta_location$distances))]
-betaframe$host_subfamily_ordered <- factor(betaframe$host_subfamily, levels = subfamily_ordered)
-betaframe$temperature <- betaframe$temp_week
 
 # Betadisper family level
+permutest(beta_family, permutations = 999) 
+plot(beta_family)
+
 betadisp.family <- ggplot(betaframe, aes(x=host_family, y=beta_family))+
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_subfamily),alpha = 0.8) +
   scale_colour_manual(values=subfamily_colorfix) +  theme_line2() +
   labs(y="distance to centroid", x='') 
 
-permutest(beta_family, permutations = 999) 
-plot(beta_family)
-
 # Betadisper subfamily level
-betadisp.subfamily.country <- ggplot(betaframe, aes(x=host_subfamily_ordered, y=beta_subfamily))+
-  geom_violin( trim = T, adjust = 0.8, scale = "width" ) + # draw_quantiles = c(0.5),
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_tribe, shape=country),alpha = 0.8) +
-  scale_colour_manual(values=tribe_colorfix) +  
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  labs(y="distance to centroid", x='', color ="host tribe") + #subtitle="distance to centroid", 
-  facet_wrap(~ country, scales = "free_x") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2))
-
 permutest(beta_subfamily, permutations = 999) 
 plot(beta_subfamily)
 # Difference in beta dispersion indicates variation in within-group community heterogeneity
 
-
-# sort by subfamily
-betadisp.subfamily <- ggplot(betaframe, aes(x = fct_reorder(host_subfamily, beta_subfamily, .fun = median, na.rm = TRUE), y = beta_subfamily)) +
-  geom_boxplot() +
-  #geom_violin(#draw_quantiles = c(0.5), trim = F,  scale = "width" 
-  #           ) +
-  geom_point(position = position_jitter(w = 0.1, h = 0), size = 4, aes(color = host_tribe, shape = country), alpha = 0.8) +
-  scale_colour_manual(values = tribe_colorfix) +  
-  theme_line2() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  labs(subtitle = "beta dispersion",  y = "distance to centroid",  x = '',  color = "host tribe") +
-  guides(color = guide_legend(order = 1), shape = guide_legend(order = 2) )
-
 betadisp.subfamily.ordered <- ggplot(betaframe, aes(x=beta_subfamily, y=host_subfamily_ordered))+
   #geom_boxplot(aes(group = host_subfamily))+
-  geom_violin( trim = T, adjust = 0.6 , scale = "width" ) + # draw_quantiles = c(0.5),
+  geom_violin( trim = F, adjust = 0.6 , scale = "width" ,width = 0.6 , colour = "grey40",  linewidth = 0.4) + # draw_quantiles = c(0.5),
   geom_point(position = position_jitter(h = 0.1, w = 0), size=4, aes(color = host_tribe, shape=country),alpha = 0.8) +
-  scale_colour_manual(values=tribe_colorfix) +  
+  scale_colour_manual(values=tribe_colorfix) + 
+  coord_cartesian(xlim = c(min(betaframe$beta_subfamily), max(betaframe$beta_subfamily))) +
   theme_line2()+ scale_y_discrete(limits = rev) + # reverse order
   labs(subtitle="", y="", x='distance to centroid', color ="host tribe") +
   guides(
@@ -4739,19 +4032,19 @@ beta_country_robust <- betadisper(genus.vegdist, group = genus.robust.df$country
 beta_location_robust <- betadisper(genus.vegdist, group = genus.robust.df$location)
 
 # robust tests on genus.robust
-permutest(beta_genus_robust, permutations = 9999)
+permutest(beta_genus_robust, permutations = 999)
 plot(beta_genus_robust)
 
-permutest(beta_tribe_robust, permutations = 9999)
+permutest(beta_tribe_robust, permutations = 999)
 plot(beta_tribe_robust)
 
-permutest(beta_subfam_robust, permutations = 9999)
+permutest(beta_subfam_robust, permutations = 999)
 plot(beta_subfam_robust)
 
-permutest(beta_country_robust, permutations = 9999)
+permutest(beta_country_robust, permutations = 999)
 plot(beta_country_robust)
 
-permutest(beta_location_robust, permutations = 9999)
+permutest(beta_location_robust, permutations = 999)
 plot(beta_location_robust)
 
 # Put distances in data frame for plotting and linear model
@@ -4761,7 +4054,7 @@ betadisp.genus   <- ggplot(genus.robust.df  , aes(x=fct_reorder(host_genus, beta
   geom_boxplot() +
   geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_tribe, shape=country),alpha = 0.8) +
   scale_colour_manual(values=tribe_colorfix) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1, face = "italic")) +
   labs(subtitle="", y="distance to centroid", x='', color ="host tribe") +
   guides(
     color = guide_legend(order = 1), # manual legend order
@@ -4777,47 +4070,15 @@ plot(beta.lm.select,2)
 hist(beta.lm.select$residuals) # extract the residuals
 shapiro.test(residuals(beta.lm.select))
 
-### betadisper sublocation 
-# Simplify dataset / remove sublocations with 3 or less samples 
-sublocation_to_keep <- df.sample %>%
-  group_by(sublocation) %>%
-  filter(n() > 3) %>%   # keep sublocation with >3 samples
-  pull(sublocation)
 
-# Subset the phyloseq object to keep only the selected host sublocation
-sublocation.robust <- subset_samples(sample.species.rel, sublocation %in% sublocation_to_keep)
-sublocation.robust.df  <- data.frame(sample_data(sublocation.robust))
-
-# Tests if groups have different beta dispersion
-sublocation.vegdist <- vegan::vegdist(t(otu_table(sublocation.robust)), index="bray")
-beta_sublocation_robust <- betadisper(sublocation.vegdist, group = sublocation.robust.df$sublocation)
-permutest(beta_sublocation_robust, permutations = 9999)
-
-# Put distances in data frame for plotting and linear model
-sublocation.robust.df$beta <- beta_sublocation_robust$distances
-
-betadisp.sublocation   <- ggplot(sublocation.robust.df, aes(x=fct_reorder(sublocation, beta, .fun = median, na.rm = TRUE), y=beta))+
-  geom_boxplot() +
-  geom_point(position = position_jitter(w = 0.1, h = 0), size=4, aes(color = host_tribe, shape=country),alpha = 0.8) +
-  scale_colour_manual(values=tribe_colorfix) +
-  theme_line2()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-  labs(subtitle="Within-Group Variation per Sublocation", y="distance to centroid", x='', color ="host tribe") +
-  facet_wrap(~ country, scales = "free_x") +
-  guides(
-    color = guide_legend(order = 1), # manual legend order
-    shape = guide_legend(order = 2) )
-
-
-pdf(file.path(out_dir, "02_sample_div_beta_plot_betadisper.pdf"), width=12, height=6)
+pdf(file.path(out_dir, "03_sample_div_beta_plot_betadisper.pdf"), width=12, height=6)
 betadisp.family
-betadisp.subfamily.country
-betadisp.subfamily 
 betadisp.subfamily.ordered
 betadisp.tribe
 betadisp.genus
 betadisp.country
 betadisp.location 
-betadisp.sublocation 
+
 dev.off()
 
 
@@ -4840,17 +4101,17 @@ table(genus.robust.df$host_genus, genus.robust.df$location)
 
 set.seed(781)
 # test adonis individual taxomomic ranks
-adonis.fam  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_family , data=genus.robust.df,  permutations = 9999, by = "margin")
+adonis.fam  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_family , data=genus.robust.df,  permutations = 999, by = "margin")
 adonis.fam  # 3.5% 
 #              Df SumOfSqs      R2     F Pr(>F)    
 # host_family   1    2.123 0.03545 5.8434  1e-04 ***
 
-adonis.subfam  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_subfamily , data=genus.robust.df,  permutations = 9999, by = "margin")
+adonis.subfam  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_subfamily , data=genus.robust.df,  permutations = 999, by = "margin")
 adonis.subfam  # 18%
 #              Df SumOfSqs      R2     F Pr(>F)    
 # host_subfamily   6   10.926 0.18241 5.7262  1e-04 ***
 
-adonis.tribe  <-  adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_tribe , data=genus.robust.df,  permutations = 9999, by = "margin")
+adonis.tribe  <-  adonis2(phyloseq::distance(genus.robust, method = "bray")~   host_tribe , data=genus.robust.df,  permutations = 999, by = "margin")
 adonis.tribe # 24.7%
 #              Df SumOfSqs      R2     F Pr(>F)    
 # host_tribe  10   14.829 0.24755 4.9349  1e-04 ***
@@ -4873,11 +4134,12 @@ adonis.storage
 # location     2    0.618 0.00994 1.0673  0.340 
 # storage, location not significant when tribe is in the model
 
-adonis.country  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~ country , data=genus.robust.df,  permutations = 9999, by = "margin")
+# Univariate PERMANOVA environmental predictors
+adonis.country  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~ country , data=genus.robust.df,  permutations = 999, by = "margin")
 adonis.country
 # country    1    3.592 0.05773 10.11  1e-04 *** # alone 6%
 
-adonis.location  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~ location  , data=genus.robust.df,  permutations = 9999, by = "margin")
+adonis.location  <- adonis2(phyloseq::distance(genus.robust, method = "bray")~ location  , data=genus.robust.df,  permutations = 999, by = "margin")
 adonis.location
 # location   3    4.809 0.07729 4.5511  1e-04 *** # alone 8% 
 
@@ -4890,16 +4152,6 @@ adonis.Peru.only
 # location    1   0.1917 0.00615 0.7216  0.789    
 # host_genus 16   9.6830 0.31041 2.2780  0.001 ***
 # No influence of sampling year, elevation or location!
-
-# adonis only Germany dataset
-Germany.df <- as(sample_data(Germany.species.rel),"data.frame")
-adonis.Germany.only <-  adonis2(phyloseq::distance(Germany.species.rel, method = "bray") ~   year +  kw  +  location + host_genus  , data = Germany.df , permutations = 999, by = "margin")
-adonis.Germany.only
-# year        2   0.6991 0.02550 1.2405  0.166    
-# kw          1   0.4384 0.01599 1.5558  0.075 .  
-# location    1   0.1485 0.00542 0.5271  0.957    
-# host_genus  6   4.4572 0.16258 2.6364  0.001 ***
-# No influence of sampling year, kw or location!
 
 
 #### Robustness Check (filter subfamily with ≥10 samples)
@@ -5062,7 +4314,11 @@ rda_env <- rda(comm_hel ~ kw + temp_week + location +  Condition(host_tribe), da
 anova(rda_env, permutations = 999)
 RsquareAdj(rda_env)
 
-sink(file.path(out_dir, "02_sample_div_beta_stats_adonis_varpart.txt"))
+sink(file.path(out_dir, "03_sample_div_beta_stats_adonis_varpart.txt"))
+"genus.robust" 
+table(sample_data(genus.robust)$host_genus)
+table(sample_data(genus.robust)$host_tribe)
+table(sample_data(genus.robust)$country)
 adonis.fam
 adonis.subfam
 adonis.tribe
@@ -5071,6 +4327,11 @@ adonis.species
 adonis.storage
 adonis.country
 adonis.location
+"subfam.robust" 
+table(sample_data(subfam.robust)$host_subfamily)
+table(sample_data(subfam.robust)$host_tribe)
+table(sample_data(subfam.robust)$host_genus)
+table(sample_data(subfam.robust)$country)
 adonis.robust.tribe
 "Show effect size as marginal R2"
 r2_df_clean
@@ -5084,7 +4345,7 @@ vp_location
 sink()
 
 
-## 03 taxa abundance core / ASV / endo  --------------
+## 04 taxa abundance core / ASV / endo  --------------
 
 #### Core abundance subfamily # manually rebuild stripchart
 core_stripchart.rebuild <- ggplot(core.melt, aes(x = factor(host_subfamily, levels = rev(subfamily_ordered)), y = Abundance)) +
@@ -5092,7 +4353,7 @@ core_stripchart.rebuild <- ggplot(core.melt, aes(x = factor(host_subfamily, leve
   geom_jitter(aes(color = host_subfamily, shape = country),width = 0.2, size = 3, alpha = 0.8) +  # points on top
   facet_wrap(~genus) + # , scales = "free"
   coord_flip() +
-  theme_grid() + theme(axis.text.x = element_text(size = 8)) +
+  theme_grid() + theme(axis.text.x = element_text(size = 8),  strip.text = element_text(face = "italic")) +
   scale_colour_manual(values = subfamily_colorfix) + # alternative color country
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) +
   labs(x = "", y = "genus core [%]", color = "host subfamily", fill = "host subfamily") +
@@ -5142,7 +4403,7 @@ core_stripchart.country.stats <- ggplot(core.melt, aes(x = country, y = Abundanc
   geom_violin() +
   stat_summary(fun = mean,  geom = "crossbar", width = 0.2,             
                color = "black",  linewidth = 0.5  ) +
-  facet_wrap(~factor(genus, levels = sorted_taxa)) +  # use sorted_taxa for facet order #facet_wrap(~genus)
+  facet_wrap(~factor(genus, levels = sorted_taxa), ncol = 6) +  # use sorted_taxa for facet order #facet_wrap(~genus)
   theme_grid() + theme(axis.text.x = element_text(size = 8), strip.text = element_text(face = "italic")) +
   scale_colour_manual(values = country_colorfix) +
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) +
@@ -5162,13 +4423,16 @@ sample.ASV.core.top.melt <- psmelt(sample.ASV.core.top)
 ASV.bubble.core.country <- ggplot(sample.ASV.core.top.melt, aes(sampleID,  fct_reorder(OTU, genus, .desc = TRUE) )) +
   geom_point(aes (size = Abundance, color = genus ), alpha = 0.8) + # color = factor(genus, levels = core_genus_abundance$genus)
   theme_line2() +
-  facet_wrap(~genus + country, scales = "free", ncol = 4) +
+  facet_wrap(~genus + country, scales = "free", ncol = 4,
+             labeller = labeller(genus = function(x) paste0("*", x, "*"), country = label_value )) +
   scale_color_manual(values = core_palette, name = "genus") +
-  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank() ) +
-  guides(color = guide_legend(override.aes = list(size = 4))) +  # bigger dots in legend
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        strip.text = ggtext::element_markdown(),
+        axis.text.y  = element_text(size = 7) ) +
+  guides(color = guide_legend(override.aes = list(size = 4),theme = theme(legend.text = element_text(face = "italic") )) )+  # bigger dots in legend
   labs(x="",y="", fill="genus core", size="rel. ab. [%]") 
 
-pdf(file.path(out_dir, "03_sample_taxa_abundance_core_ASV.pdf"), width=12, height=6)
+pdf(file.path(out_dir, "04_sample_taxa_abundance_core_ASV.pdf"), width=12, height=6)
 core_stripchart.rebuild
 core_stripchart.country.stats
 ASV.bubble.core.country
@@ -5177,7 +4441,7 @@ dev.off()
 # Cleanup pipeline 
 rm(sample.ASV.core.top.melt)
 
-sink(file.path(out_dir, "03_sample_taxa_abundance_core_ASV.txt"))
+sink(file.path(out_dir, "04_sample_taxa_abundance_core_ASV.txt"))
 "Kruskal.test core genus per subfamily"
 data.frame(core_stats_subfam)
 "Kruskal.test core genus per country"
@@ -5242,15 +4506,17 @@ symb_palette <- setNames(taxaPalette(symbiontCount), sym_abundance$genus)
 endo.bar2 <- ggplot(endosymbiont.rel.melt,aes(x=Sample, y=Abundance, fill = genus))+
   geom_bar( stat="identity")+
   scale_fill_manual(values = symb_palette)+ 
-  theme_line2() + #theme(axis.text.x = element_text(angle = 60, hjust = 1, face="italic") ) + 
+  facet_wrap(~host_genus + country, scale = "free_y" ,
+             labeller = labeller(host_genus = function(x) paste0("*", x, "*"), # genus names italic
+             country = label_value  ), ncol = 6 ) +
+  coord_flip() +   theme_line2() + 
   scale_y_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) + 
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) + # remove sample names 
+  theme(axis.text.y = element_blank(), # remove sample names 
+        axis.ticks.y = element_blank(),
+        strip.text = ggtext::element_markdown(),
+        legend.text  = element_text(face = "italic") ) + 
   labs(x="",y="rel. ab. [%]", fill="endosymbiont") +
-  #facet_wrap(~host_genus, scale = "free_y" ) + coord_flip() +
-  facet_wrap(~host_genus+country, scale = "free_y" ) + coord_flip() +
-  #facet_grid(~host_genus, scales = "free", space = "free")
   guides(fill = guide_legend(reverse = TRUE))  # reverse legend order
-  
 
 # Average abundance per genus
 avg_ab_genus <- endosymbiont.rel.melt %>%
@@ -5261,17 +4527,15 @@ avg_ab_genus <- endosymbiont.rel.melt %>%
   mutate(total_abundance = sum(mean_abundance)) %>%
   ungroup()
 
-
 endo.bar3 <- ggplot(avg_ab_genus ,aes(x= mean_abundance, y=fct_rev(fct_reorder(host_genus, total_abundance)), fill = genus)) + #fct_reorder(genus, Abundance)
-  geom_bar(#position="fill",
-    stat="identity") +
+  geom_bar(stat="identity") +
   scale_fill_manual(values=symb_palette) +
-  theme_line2() + theme(axis.text.y = element_text(face = 'italic') ) +
+  theme_line2() + theme(axis.text.y = element_text(face = 'italic'), legend.text  = element_text(face = "italic") ) +
   scale_x_continuous(labels = scales::label_percent(scale = 100, prefix = "", suffix = "")) +
   labs(x="rel. ab. [%]",y="", fill="endosymbiont") +
   guides(fill = guide_legend(reverse = TRUE)) # reverse legend order
 
-pdf(file.path(out_dir, "03_sample_taxa_abundance_endosymbiont.pdf"), width=12, height=6)
+pdf(file.path(out_dir, "04_sample_taxa_abundance_endosymbiont.pdf"), width=12, height=6)
 endosymbiont.rel_stripchart
 endosymbiont.rel_stripchart1
 endo.bar2
@@ -5284,7 +4548,7 @@ dev.off()
 
 # percent of total reads remaining 
 percent_retained <- (sum(otu_table(sample.filter)) / sum(otu_table(sample.species))) * 100
-percent_retained # still represents 98.0337% of total dataset
+percent_retained # still represents 98% of total dataset
 
 # Check if core taxa remain in sample.filter
 sample.filter.rel.g <- aggregate_taxa(sample.filter.rel, "genus")
@@ -5293,13 +4557,6 @@ data.frame(sort(taxa_sums(sample.filter.rel.g)))
 filter.core.genus <- core_members(sample.filter.rel.g , detection = 0.01, prevalence = 20/100)
 filter.core.genus.high <- core_members(sample.filter.rel.g, detection = 0.05, prevalence = 10/100) 
 filter.core.genus.low <- core_members(sample.filter.rel.g, detection = 0.002, prevalence = 40/100) 
-
-# sample.filter check individual taxa
-table(tax_table(sample.filter)[, "phylum"], exclude = NULL)
-check_taxa <- subset_taxa(sample.filter, genus == "Pseudomonas")
-sum(taxa_sums(check_taxa))
-sort(data.frame(sum = taxa_sums(check_taxa)), decreasing = FALSE)
-sort(data.frame(sum = sample_sums(check_taxa)), decreasing = FALSE)
 
 # select most abundant ASVs for each genus (manual version)
 asv_data <- data.frame(
@@ -5322,23 +4579,23 @@ asv_names <- rownames(otu_table(sample.filter.genus))
 # compare ASV name list both methods should give same outcome
 setequal(asv_names, abundant_ASVs)
 
-# Import sequences and rename to ASV1 etc.
-asv_sequences <- readDNAStringSet("asvs.merge.fa")
-names(asv_sequences) <- gsub(";size=.*", "", names(asv_sequences))
-head(names(asv_sequences))
+# Import sequences, rename to ASV1, match ASVs to sequences, export to make tree
+# asv_sequences <- readDNAStringSet("asvs.merge.fa")
+# names(asv_sequences) <- gsub(";size=.*", "", names(asv_sequences))
+# head(names(asv_sequences))
+# matched_all_seqs <- asv_sequences[names(asv_sequences) %in% asv_names]
+# writeXStringSet(matched_all_seqs , file = "tree/ASV_export.fasta")
 
-# Match most abundant ASVs per genus to sequences
-matched_all_seqs <- asv_sequences[names(asv_sequences) %in% asv_names]
-sample.filter.seq <- merge_phyloseq(sample.filter.genus, matched_all_seqs)
-data.frame(sort(taxa_sums(sample.filter.genus)))
-data.frame(sort(taxa_sums(sample.filter.seq)))
-
-# Export ASV sequences to make tree
-writeXStringSet(matched_all_seqs , file = "tree/ASV_export.fasta")
 # Use to make IQ tree or RAxML tree with SINA 1.2.12 (https://www.arb-silva.de/aligner/)
 # Parameter: SSU, min identity with query 0.90, Number of neighbours 1
 # tree building RAxML with GTR model and Gamma likelihood
 # rename tree file in nwk and reimport into R (arb-silva.nwk)
+
+# Re-import sequences and merge phyloseq
+matched_all_seqs <- readDNAStringSet("tree/ASV_export.fasta")
+sample.filter.seq <- merge_phyloseq(sample.filter.genus, matched_all_seqs)
+data.frame(sort(taxa_sums(sample.filter.genus)))
+data.frame(sort(taxa_sums(sample.filter.seq)))
 
 # Find outgroup for root tree
 check_taxa <- subset_taxa(sample.filter.seq , phylum == "Bacteroidetes") # Fusobacteria Deinococcus-Thermus Verrucomicrobia
@@ -5380,40 +4637,17 @@ tree.core <- ggtree(tree.root, layout="circular") +
   geom_tiplab(size = 3, align = TRUE, aes(label = ifelse(label %in% core_tips$label, 
                                  core_tips$genus_name[match(label, core_tips$label)], ""))) # Only show core genera
   
-# Select bee associated taxa 
-select_bee_genus_list <- c("Gilliamella", "Snodgrassella", "Lactobacillus", "Bifidobacterium", "Frischella", "Bartonella", "Apibacter", "Apilactobacillus", "Commensalibacter")
-bee_taxa <- taxa_data[rownames(taxa_data) %in% select_bee_genus_list | taxa_data[,"genus"] %in% select_bee_genus_list , ]
-
-bee_tips <- data.frame(genus = bee_taxa[,"genus"],  # Extract bee core genus names
-                       label = rownames(bee_taxa) ) # Extract ASV/tip labels
-
-
-tree.bee <- ggtree(sample.filter.tree, layout="circular") +
-  geom_tree() + geom_tiplab(size = 3, align = TRUE, aes(label = ifelse(label %in% bee_tips$label, genus, ""))) +  # Only show core genera
-  theme(legend.position = "right") 
-
-tree.bee.asteriks <- ggtree(sample.filter.tree, layout="circular") +
-  geom_tree() + geom_tiplab(size = 3, align = TRUE, aes(label = ifelse(label %in% bee_tips$label, "*", "")), color = "red") +  # Show * for matching tips
-  theme(legend.position = "right")
-
-
 pdf(file.path(out_dir, "05_ggtree_core.pdf"), width=12, height=6)
 IQ.tree
 SINA.tree
 tree.core
-tree.bee
-tree.bee.asteriks
 dev.off()
 
 # Cleanup pipeline
 rm(IQ.tree)
 rm(SINA.tree)
-rm(tree.bee)
-rm(tree.bee.asteriks)
-rm(asv_sequences)
 rm(matched_all_seqs)
 rm(sample.filter.seq)
-
 rm(sample.filter.IQtree)
 rm(sample.filter.SINA_tree)
 
@@ -5547,23 +4781,6 @@ fan.core.point <- fan.core.label + geom_point(aes(color = taxonomy_df$phylum, x 
                                               show.legend = FALSE) +
                                               scale_color_manual(values = color_phyla)
   
-fan.core.bee <- fan.core.point  + 
-    geom_tiplab(size = 6, align = TRUE, offset = 0.001, # nudge_y = -0.3, # offset = 0.14
-                aes(label = ifelse(label %in% bee_tips$label, "\u2022", "")), # * or bold asteriks ✱ \u2022
-                linetype = NA, # NA dotted
-                family = "mono")   # Only show * for matching tips  
-  
-fan.core.annotation <- fan.core.bee + annotate("text",  x = 0,  y = 0, 
-  label = "rel. ab. [%]", size = 2.8, angle = 0, hjust = -4,  vjust = 2.5) +
-  theme(legend.key.size = unit(0.6, "lines"),  # smaller legend (usually 1 line)
-        legend.position = "inside",
-        legend.position.inside = c(0.9, 0.5), # place legend closer to plot
-        legend.justification = c(0, 0.5),     # Right-center of the legend box
-        plot.margin = margin(0, 40, 0, 0) )   # increase right margin for legend
-        # figure border highlight for diagnostics
-        # theme(panel.border = element_rect(color = "blue", fill = NA, linewidth = 1)) +
-        # theme(plot.background = element_rect(color = "red", fill = NA, linewidth = 1)) 
-  
   
 #### ggtree square tree  -----
 head(taxonomy_df)
@@ -5580,59 +4797,11 @@ square_taxa_data <- tax_table(sample.filter.tree) %>%
 square.core <- ggtree(tree.root, size = 0.2) %<+% square_taxa_data +
   geom_tiplab(aes(label = tree_genus, color = tree_phylum),
     align = TRUE, size = 2.5, hjust = 1, offset = 0.08, #family='mono'#, linesize = .7, offset = 0.035 0.005
-    linetype = NA, # NA  "dotted"  linetype = "dotted"
+    fontface = "italic", linetype = NA, # NA  "dotted"  linetype = "dotted"
     show.legend = FALSE, lineend = "round", lineheight = 0.9  ) +
   scale_color_manual(values = color_phyla)
 
-square.prev_all <- gheatmap(square.core, combined_rel_prev.df, 
-                            width = 0.2,
-                            offset = 0.084, # 0.035, 0.06
-                            colnames_position = "top",
-                            colnames_angle =60, font.size = 3,
-                            hjust = 0,
-                            colnames_offset_y = 0.5) +
-  scale_fill_viridis_c(option = "inferno", name = "Prevalence") +
-  theme(  plot.margin = margin(t = 45, r = 10, b = 10, l = 10) # Add space at the top
-    ) + coord_cartesian(clip = "off")
-
-
-square.core.bar <- square.prev_all + new_scale_fill() +
-  geom_fruit(data=taxonomy_df, geom=geom_bar, 
-    mapping=aes(y=label, x=rel_ab, fill=phylum), 
-    pwidth=0.5, # 0.5 50% space for geom bar
-    offset = 0.45, # 0.25 0.18 0.31
-    orientation="y", stat="identity",
-    axis.params = list(axis = "x", title = NULL, text.size = 3, hjust = 0.5, vjust = 1.5, line.color = "black" ),
-    grid.params = list(size = 0.2, color = "black") ) +  # coord_cartesian(clip = "off") + 
-  scale_fill_manual(values = color_phyla) +
-  labs(x = "Rel. Abundance [%]") +
-  theme(axis.title.x = element_text(size = 10, vjust = -1, hjust = 0.85 )) 
-
-
-square.label <- square.core.bar  + geom_tiplab(size = 2.5, align = T, offset = 0.19, #nudge_y = 0.3 , # 0.13 0.085
-                                   aes(label = ifelse(label %in% core_tips$label, core_tips$genus_name[match(label, core_tips$label)], "")), linetype = NA)  # Only show core genera
-
-square.bee.core <- square.label + geom_tiplab(size = 5, align = TRUE, offset = 0.08, #nudge_y = -0.4,
-              aes(label = ifelse(label %in% bee_tips$label, "\u2022", "")),
-              linetype = NA, family = "mono")   # Only show * for matching tips
-
-square.point <- square.bee.core + geom_point(aes(color = taxonomy_df$phylum, x = x + 0.005),
-                                              data = ~ .x[.x$isTip, ],  
-                                              size = 2, show.legend = FALSE) +
-                                              scale_color_manual(values = color_phyla)
-
-square.annotation <-  square.point +   geom_treescale(fontsize=3, linesize=0.1, x=0, y=-2) +
-  theme(legend.position.inside=c(1.3, 0.5),
-        #legend.background=element_rect(fill=NA), #legend.title=element_blank(),
-        #legend.text=element_text(size=12), #legend.spacing.y = unit(0.2, "cm"),
-  ) 
-
-# convert inch to cm -> 16 / 2.54 
-pdf(file.path(out_dir, "05_ggtree_layers.pdf"), width= 20 / 2.54 , height= 16 / 2.54)
-fan.core.annotation
-square.annotation 
-dev.off()
-
+# continue with inclusion of Hymenoptera data
 
 # Cleanup pipeline to optimize .RData file size
 rm(Pierinae)
@@ -5697,6 +4866,7 @@ AlluTaxaCountryreverse <- ggplot(df_sorted, aes(axis1 = Sample, axis2 = Taxa, y 
   geom_alluvium(aes(fill = Taxa), width = 0.2, knot.pos = 0.3, alpha = 0.6) +  
   geom_stratum(color = "grey20", width = 0.2, alpha = 0.6)  +  # "grey40"
   geom_text(stat = "stratum", aes(label = after_stat(stratum),
+                                  fontface = after_stat(ifelse(x > 1.5, "italic", "plain")), # genus names italic
                                   angle = after_stat(ifelse(after_stat(x) < 1.5, 90, 0)),  # rotate only axis1 labels
                                   hjust = after_stat(ifelse(after_stat(x) < 1.5, 0.5, 1)),
                                   x = after_stat(x + ifelse(after_stat(x) > 1.5, 0.08, 0))
@@ -5736,9 +4906,6 @@ print(object.size(otu_bee), units = "auto")
 rm(re_otu_bee)
 rm(otu_bee)
 
-# Subset ASV level
-#sample.bee.ASV.Hymenoptera <- subset_samples(sample.bee.ASV, host_order=="Hymenoptera")
-sample.bee.ASV.Lepidoptera <- subset_samples(sample.bee.ASV, host_order=="Lepidoptera")
 
 # tax glom genus level
 sample.bee.species <- tax_glom(sample.bee.ASV,taxrank="genus") # tax_glom processing takes time
@@ -5751,40 +4918,21 @@ sample.Lepidoptera <- subset_samples(sample.bee.species, host_order=="Lepidopter
 sample.Hymenoptera.rel <- transform_sample_counts(sample.Hymenoptera, function(x) x/sum(x))
 sample.Lepidoptera.rel <- transform_sample_counts(sample.Lepidoptera, function(x) x/sum(x))
 
-# > check taxa ----
-check_taxa <- subset_taxa(sample.bee.ASV, genus == "Floricoccus") # 
-sum(sample_sums(check_taxa))
-
-sort(data.frame(sum = sample_sums(check_taxa),
-                host_genus = sample_data(check_taxa)$host_genus), decreasing = T)
-data.frame(
-  genus = as.character(tax_table(check_taxa)[names(sort(taxa_sums(check_taxa), decreasing = F)), "genus"]),
-  Taxa_Sum = sort(taxa_sums(check_taxa), decreasing = F))
-
-
-# check taxa
-my_taxon <- c("Proteobacteria spc")
-check_taxa <- subset_taxa(sample.Hymenoptera.rel, genus == my_taxon)
-tail(sort(data.frame(sum = sample_sums(check_taxa)*100,
-                     host_genus = sample_data(check_taxa)$host_genus), decreasing = FALSE),20)
-
-
-
 
 # Lep Hym groups n size
 table(sample_data(sample.bee.species)$host_order)
 # Hymenoptera Lepidoptera 
-# 874         167 
+# 872         167 
 
 table(sample_data(sample.Lepidoptera)$country)
 
 table(sample_data(sample.Hymenoptera)$host_subfamily)
 #  Apinae Halictinae 
-#  670        204 
+#  668        204 
 
 table(sample_data(sample.Hymenoptera)$host_tribe)
-#   Apini    Bombini Euglossini Halictinae Meliponini 
-#   69         45        140        204        416 
+#    Apini Augochlorini      Bombini   Euglossini   Halictinae   Meliponini 
+#     69          144           45          139           60          415 
 
 # check bee genera list
 data.frame(table(sample_data(sample.Hymenoptera)$host_genus) )
@@ -5799,35 +4947,7 @@ subfamily_bee <- names(table(sample_data(sample.Hymenoptera)$host_subfamily))
 tribe_bee <- names(table(sample_data(sample.Hymenoptera)$host_tribe))
 # "Apini"      "Bombini"    "Euglossini" "Halictinae" "Meliponini"
 
-## Compare both datasets (if there is a larger taxa discrepancy)
-data.frame(sort(taxa_sums(sample.Lepidoptera), decreasing = T)) # Remove zero counts from dataset 
-sample.Lepidoptera.condensed = prune_taxa(taxa_sums(sample.Lepidoptera )>100, sample.Lepidoptera)
-data.frame(sort(taxa_sums(sample.Lepidoptera.condensed), decreasing = T)) 
-
-data.frame(sort(taxa_sums(sample.species), decreasing = T)) 
-
-# Create abundance tables
-df1 <- data.frame(genus = as.character(tax_table(sample.species)[, "genus"]),
-  abundance = taxa_sums(sample.species) )
-
-df2 <- data.frame(genus = as.character(tax_table(sample.Lepidoptera.condensed)[, "genus"]),
-  abundance = taxa_sums(sample.Lepidoptera.condensed) )
-
-# Genera unique to each dataset
-only_ps1 <- df1 |>
-  dplyr::filter(!genus %in% df2$genus) |>
-  dplyr::arrange(desc(abundance))
-
-only_ps2 <- df2 |>
-  dplyr::filter(!genus %in% df1$genus) |>
-  dplyr::arrange(desc(abundance))
-
-head(only_ps1, 20) # only Lep dataset
-head(only_ps2, 10) # only Lep bee dataset
-
-
 rm(sample.bee.ASV)
-
 
 
 ## Compare insect order differences Lep / Hym
@@ -5869,21 +4989,6 @@ lep.core.genus.high <- core_members(sample.Lepidoptera.rel, detection = 0.05, pr
 lep.core.genus      <- core_members(sample.Lepidoptera.rel, detection = 0.01, prevalence = 20/100)  # 12 taxa
 lep.core.genus.low  <- core_members(sample.Lepidoptera.rel, detection = 0.002, prevalence = 40/100) # 12 taxa
 
-# Check taxa 
-check_taxa <- subset_taxa(sample.Lepidoptera.rel, genus == "Floricoccus")
-sort(data.frame(sum = sample_sums(check_taxa)*100,
-                host_genus = sample_data(check_taxa)$host_genus), decreasing = FALSE)
-sort(data.frame(sum = taxa_sums(check_taxa)), decreasing = FALSE)
-
-
-check_taxa <- subset_taxa(sample.bee.ASV.Lepidoptera, genus == "Pectinatus")
-check_taxa <- subset_taxa(sample.bee.ASV.Lepidoptera, family == "Pectobacteriaceae")
-sort(data.frame(sum = sample_sums(check_taxa),
-                host_genus = sample_data(check_taxa)$host_genus), decreasing = FALSE)
-sort(data.frame(sum = taxa_sums(check_taxa)), decreasing = FALSE)
-
-
-
 # Bee core taxa
 prevalence(sample.Hymenoptera.rel, detection = 5/100, sort = TRUE)[1:20] # 
 prevalence(sample.Hymenoptera.rel, detection = 1/100, sort = TRUE)[1:20] # 
@@ -5902,8 +5007,6 @@ venn_bee.core_overlap <-  ggVennDiagram(bee.core_overlap, label = "count", label
   theme(legend.position = "none") +
   scale_x_continuous(expand = expansion(mult = 0.22)) +  # Make Venn smaller
   scale_y_continuous(expand = expansion(mult = 0.1))
-
-
 
 
 # Shared core across orders 
@@ -6124,17 +5227,6 @@ bee.top.tornado$order <- factor(bee.top.tornado$order, levels = Top.bee.order)
 pal <- colorRampPalette(brewer.pal(12, "Paired"))(23)
 bee_order_palette <- setNames(pal[c(1,4,6,10,14,16,18,21)], Top.bee.order) #7 22,8
 
-# Tornado top order / family min 1% rel abundance
-Lep.Hym.order.fam.mirrored <- ggplot(bee.top.tornado , aes(family, Abundance_mirrored, fill= order)) +
-  facet_grid(order~host_order, space = "free", scales = "free",switch = "y")+ # switch = "y" remove order names
-  theme_grid()+
-  geom_bar(stat="identity")+
-  theme(strip.text.y.left = element_blank(),  # remove the order label
-        axis.title.y = element_blank()) +    # remove "family" title
-  scale_y_continuous(labels = function(x) scales::percent(abs(x))) + # show % as positive
-  #scale_fill_manual(values = bee_order_palette) +
-  coord_flip() + labs(y = "rel. ab. [%]")   
-
 # Tornado top order / family min 1% rel abundance / division by genus
 Lep.Hym.order.fam.mirrored.genus <- ggplot(bee.top.tornado, 
                                            aes(x = family, y = Abundance_mirrored, fill = order, group = genus)) +
@@ -6173,8 +5265,7 @@ sample.bee.order.top.melt$Sample <- factor(
 sample.bee.order.top.melt$Sample2 <- factor(sample.bee.order.top.melt$Sample, levels = rev(c(subfamily_ordered)))
 
 top_order_genera.flip <- ggplot(sample.bee.order.top.melt,aes(x = Sample2, y=Abundance, fill = order))+
-  geom_bar(#position="fill",
-    colour="black", stat="identity", linewidth=0.3) + 
+  geom_bar(colour="black", stat="identity", linewidth=0.3) + 
   scale_fill_manual(values = bee_order_palette)+
   theme_grid() + 
   scale_y_continuous(labels = scales::label_percent(scale = 100,  prefix = "", suffix = "" )) + 
@@ -6196,7 +5287,6 @@ top_order_total_abundance_bee # 85.6
 remaining_percent_order_bee   # 85.57
 
 pdf(file.path(out_dir, "07_Hym_Lep_mirror.pdf"), width=12, height=6)
-Lep.Hym.order.fam.mirrored
 Lep.Hym.order.fam.mirrored.genus 
 top_order_genera.flip
 dev.off()
@@ -6210,12 +5300,6 @@ bee.nmds.sqrt <- ordinate(sample.bee.sqrt, method="NMDS",distance = "bray", k=3,
 bee.nmds.sqrt.stress <- round(bee.nmds.sqrt$stress, 3)
 bee.nmds.sqrt.stress
 # dimensions: 3 Stress:     0.166 # better 3 dimensions with sqrt transformation
-
-
-nmds.sqrt.bee.all <- plot_ordination(sample.bee.rel,bee.nmds.sqrt, color="host_order", shape="country")+
-  geom_point(size=4) + theme_grid() + stat_ellipse(aes(group = factor(host_order))) +
-  annotate("text", x = Inf, y = -Inf, label = paste("Stress =", bee.nmds.sqrt.stress), 
-           hjust = 1.1, vjust = -0.5, size = 4)
 
 
 scores(bee.nmds.sqrt)$sites
@@ -6232,8 +5316,6 @@ Hym_colors <- c("Apinae" = "grey70", "Halictinae" = "grey50" )
 
 # NMDS bee color
 NMDS.bee.binder.labels.sqrt <- ggplot(bee.binder.sqrt, aes(x=NMDS1,y=NMDS2, color= host_order, shape = country)) + 
-  #stat_ellipse(linewidth=1, alpha=0.8, aes(group = factor(host_order))) +
-  #stat_ellipse(aes(group = factor(country)))+
   geom_point(data = hym.bee.binder.sqrt, size=3, aes(color=host_subfamily, shape = country), alpha = 0.6) +
   scale_colour_manual(name = "Hymenoptera", values = Hym_colors, guide = guide_legend(order = 2)     ) +
   ggnewscale::new_scale_colour() +
@@ -6323,7 +5405,7 @@ fan.core.bee.core <- fan.core.point  +
  
 
 fan.core.annotation.bee.core <- fan.core.bee.core + annotate("text",  x = 0,  y = 0, 
-                                                             label = "rel. ab. [%]", size = 2.8, angle = 0, hjust = -3.8,  vjust = 2.5) +
+                                                             label = "rel. ab. [%]", size = 2.8, angle = 0, hjust = -4.2,  vjust = 2.5) +
   theme(legend.key.size = unit(0.6, "lines"),  # smaller legend (usually 1 line)
         legend.position = "inside",
         legend.position.inside = c(0.82, 0.28), # place legend closer to plot
@@ -6409,11 +5491,11 @@ square.core.bee.bar <- square.prev.bee.all + new_scale_fill() +
              grid.params = list(size = 0.2, color = "black") ) +   
   scale_fill_manual(values = color_phyla) +
   labs(x = "Rel. Abundance [%]") +
-  theme(axis.title.x = element_text(size = 10, vjust = -1, hjust = 0.85 )) 
+  theme(axis.title.x = element_text(size = 10, vjust = -0.2, hjust = 0.87 )) 
 
 
 square.core.bee.label <- square.core.bee.bar  + geom_tiplab(size = 2.5, align = T, offset = 0.23, #nudge_y = 0.3 , # 0.19
-                                               aes(label = ifelse(label %in% core_tips$label, core_tips$genus_name[match(label, core_tips$label)], "")), linetype = NA)  # Only show core genera
+                                               aes(label = ifelse(label %in% core_tips$label, core_tips$genus_name[match(label, core_tips$label)], "")), fontface = "italic", linetype = NA)  # Only show core genera
 
 square.core.bee <- square.core.bee.label + geom_tiplab(size = 5, align = TRUE, offset = 0.08, #nudge_y = -0.4,
                                               aes(label = ifelse(label %in% bee_core_tips$label, "\u2022", "")),
@@ -6423,23 +5505,29 @@ square.core.bee.point <- square.core.bee + geom_point(aes(color = taxonomy_df$ph
                                              data = ~ .x[.x$isTip, ],  
                                              size = 2, show.legend = FALSE) + scale_color_manual(values = color_phyla)
 
-square.core.bee.annotation <-  square.core.bee.point +   geom_treescale(fontsize=3, linesize=0.1, x=0, y=-2) +
+square.core.bee.annotation <-  square.core.bee.point +   geom_treescale(fontsize=3, linesize=0.1, x=0, y=-1) +
 theme(legend.key.size = unit(0.8, "lines"), 
       legend.position = "inside",
-      legend.position.inside=c(0.1, 0.7),
-      plot.margin = margin(50, 0, 10, 5)  )   
+      legend.position.inside=c(0.1, 0.7) )   
 
+pdf(file.path(out_dir, "07_Hym_Lep_phylo_ggtree_layers.pdf"), width= 20 / 2.54 , height= 16 / 2.54)
+fan.core.annotation.bee.core
+square.core.bee.annotation
+dev.off()
 
-
+# Cleanup pipeline
+rm(sample.Hymenoptera)
+rm(sample.Hymenoptera.rel)
+rm(check_taxa)
 
 ## 08 Final Figures  -----
 empty.plot <- ggplot() + theme_void()
 
 # Fig 1 arrange with patchwork 
-fig1.arrange_revision <- (empty.plot)+ 
+fig1.arrange.rev <- (empty.plot)+ 
   (qPCR_plot_host.revision + theme(legend.position = "empty") ) +
   (NMDS.bee.binder.labels.sqrt+ theme(legend.position = "right") ) +
-  plot_layout(ncol = 3, widths = c(1.2,0.9,1)) &  
+  plot_layout(ncol = 3, widths = c(0.9,0.9,1)) &  
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0),
         plot.tag.position = c(0.01, 0.98),
@@ -6447,30 +5535,24 @@ fig1.arrange_revision <- (empty.plot)+
         legend.key.size = unit(0.8, "lines") )      # compact legend
 
 # Fig 2 arrange
-betadisp.subfamily.theme <- betadisp.subfamily.ordered  + theme(
-  legend.key.size = unit(0.9, "lines") )
-
-fig2.betadisp.tribe.wrap <- ggarrange( betadisp.subfamily.theme, PCoA.host.overview.tribe ,   labels = c('a', 'b'),
-                                       common.legend = T, legend = "right", ncol = 2,   nrow = 1, align = "h", widths = c(1.2 ,2) )
-
-betadisp.subfamily.ordered_noleg <- betadisp.subfamily.ordered  + theme(legend.position = "none")
-PCoA.host.overview.tribe_theme <- PCoA.host.overview.tribe + theme(legend.key.size = unit(0.9, "lines") )
-
-fig2.betadisp.tribe.wrap.REV <- ggarrange( betadisp.subfamily.ordered_noleg, PCoA.host.overview.tribe_theme , marginalR2.plot,   labels = c('a', 'b', 'c' ),
-                                       common.legend = F, ncol = 3,   nrow = 1, align = "h", widths = c(1 ,2, 0.4) )
+fig2.betadisp.tribe.wrap.rev <- ggarrange(betadisp.subfamily.ordered  + theme(legend.position = "none"),
+                                          PCoA.host.overview.tribe + theme(legend.key.size = unit(0.8, "lines") ) ,
+                                          marginalR2.plot,   labels = c('a', 'b', 'c' ),
+                                          common.legend = F, ncol = 3,   nrow = 1, align = "h", widths = c(0.8 ,2, 0.4) )
 
 
 # Fig 3 arrange with patchwork
-fig3.gen.core.abundance.REV <- (order.core + theme(legend.position = "right"))+ 
-  (top_order_genera.flip + theme(legend.position = "none") ) +
-  (Lep.Hym.order.fam.mirrored.genus  #+ theme(legend.position = "none")
-   ) +
-  plot_layout(ncol = 3, guides = "collect", widths = c(0.5,0.8, 2)) &  # , guides = "collect"
+fig3.gen.core.abundance.rev <- ((
+  (order.core + theme(legend.position = "right")) /
+  (top_order_genera.flip + theme(legend.position = "none"))   ) | 
+  (Lep.Hym.order.fam.mirrored.genus)  ) +
+  plot_layout(guides = "collect", widths = c(0.7, 2)) &
   plot_annotation(tag_levels = "a") &
-  theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0),
-        plot.tag.position = c(0.01, 0.98),
-        plot.margin = margin(3, 3, 3, 3),
-        legend.key.size = unit(0.9, "lines") )      # compact legend
+  theme(
+    plot.tag          = element_text(face = "bold", size = 14, hjust = 0),
+    plot.tag.position = c(0.01, 0.98),
+    plot.margin       = margin(3, 3, 3, 3),
+    legend.key.size   = unit(0.9, "lines") )
 
 
 # Fig 5 net core revision
@@ -6481,7 +5563,7 @@ fig5.net.core.comp.rev <-
   (core.genus.abundance.subfam + theme(legend.position = "none") ) +
   (core.genus.boxplot.subfam.no.text + theme(legend.position = "none") ) +
   (core.shannon.abund + theme(legend.position = "right") ) +
-  plot_layout(ncol = 4, widths = c(0.7, 0.6, 0.6, 1.2),nrow=1) &   # c(1, 0.7, 0.7, 1.4)
+  plot_layout(ncol = 4, widths = c(0.65, 0.5, 0.5, 1.2),nrow=1) &   # c(1, 0.7, 0.7, 1.4) # c(0.7, 0.6, 0.6, 1.2)
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0),
         plot.tag.position = c(0.01, 0.98),
@@ -6523,12 +5605,10 @@ s2.plot_alpha.temp <- (
 
 
 # supplement S3 PCoA genus tribe
-PCoA.genus.wrap.tribe_noleg <- PCoA.genus.wrap.tribe + theme(legend.position = "none")
-
-betadisp.genus_theme <-  betadisp.genus + theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0), legend.key.size = unit(0.9, "lines") )
-
-s3.betadisp.tribe.wrap2.rev <- ggarrange( PCoA.genus.wrap.tribe_noleg, betadisp.genus_theme,  labels = c('a', 'b'),
-                                     common.legend = F, ncol = 2,   nrow = 1, align = "h", widths = c(1, 0.7) ) # , legend = "right"  c(1, 0.8)
+s3.betadisp.tribe.wrap2.rev <- ggarrange(
+  PCoA.genus.wrap.tribe + theme(legend.position = "none"),
+  betadisp.genus + theme(plot.tag = element_text(face = "bold", size = 14, hjust = 0),  legend.key.size = unit(0.9, "lines")),
+  labels = c("a", "b"),  common.legend = FALSE,  ncol = 2, nrow = 1,  align = "h",  widths = c(1, 0.7))
 
 
 # Venn core definition 3 area subplots A/B|C
@@ -6567,41 +5647,41 @@ sample.core.ncore_col5 <- (sample.core.filter.abundance.grid5 | noncore.filter.g
     plot.tag = element_text(face = "bold", size = 14, hjust = 0),
     axis.text.y = element_text(size = 6),)
 
-
-
-
 # supplement S10 Endosymbiont
 s10.endosymbiont.arrange <- ggarrange(endo.bar3, endo.bar2,    labels = c('a', 'b'),
           common.legend = T, legend = "right", ncol = 2,   nrow = 1, align = "h", widths = c(1,2) )
-
 
 # supplement S11 
 s11.stripchart.arrange <- ggarrange( core.genus.boxplot , core_stripchart.rebuild, labels = c('a', 'b'),
                                     common.legend = T, legend = "none", ncol = 2,   nrow = 1, align = "h", widths = c(1, 2) )
 
+rm(right_col)
+rm(pD)
 
 ### ggsave Figures -------------
 
 # figure dimensions
-# 1/3 page  20 x 7 cm
-# 2/3 page  20 x 20 cm
-# full page 20 x 25 cm
+# full page 20 x 25 cm # 1/3 page  20 x 7 cm # 2/3 page  20 x 20 cm
 # 1 column  10 x 12 cm
 
-ggsave(file.path(out_dir, "Fig1.png"), plot = fig1.arrange_revision, width = 30, height = 9, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "Fig1.pdf"), plot = fig1.arrange_revision, width = 30, height = 9, units = "cm", dpi = 300)
+# Figure dimensions Nature Journals:
+# 1 column  88 mm x 130-220 mm
+# 2 column 180 mm x 185-225 mm
 
-ggsave(file.path(out_dir, "Fig2.png"), plot = fig2.betadisp.tribe.wrap.REV , width = 30, height = 9, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "Fig2.pdf"), plot = fig2.betadisp.tribe.wrap.REV , width = 30, height = 9, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig1.png"), plot = fig1.arrange.rev, width = 30, height = 10, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig1.pdf"), plot = fig1.arrange.rev, width = 30, height = 10, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "Fig3.png"), plot = fig3.gen.core.abundance.REV  , width = 30, height = 10, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "Fig3.pdf"), plot = fig3.gen.core.abundance.REV  , width = 30, height = 10, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig2.png"), plot = fig2.betadisp.tribe.wrap.rev , width = 30, height = 10, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig2.pdf"), plot = fig2.betadisp.tribe.wrap.rev , width = 30, height = 10, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "Fig4.png"), plot = fan.core.annotation.bee.core, width = 16, height = 16, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "Fig4.pdf"), plot = fan.core.annotation.bee.core, width = 16, height = 16, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig3.png"), plot = fig3.gen.core.abundance.rev  , width = 30, height = 13, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig3.pdf"), plot = fig3.gen.core.abundance.rev  , width = 30, height = 13, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "Fig5.png"), plot = fig5.net.core.comp.rev, width = 32, height = 11, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "Fig5.pdf"), plot = fig5.net.core.comp.rev, width = 32, height = 11, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig4.png"), plot = fan.core.annotation.bee.core, width = 18, height = 18, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig4.pdf"), plot = fan.core.annotation.bee.core, width = 18, height = 18, units = "cm", dpi = 300)
+
+ggsave(file.path(out_dir, "Fig5.png"), plot = fig5.net.core.comp.rev, width = 30, height = 11, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "Fig5.pdf"), plot = fig5.net.core.comp.rev, width = 30, height = 11, units = "cm", dpi = 300)
 
 ### ggsave Supplemental Figures -----
 
@@ -6626,11 +5706,11 @@ ggsave(file.path(out_dir, "FigS6_core_square.pdf"), plot = square.core.bee.annot
 ggsave(file.path(out_dir, "FigS7_Hym_Lep_core_stripchart.png"), plot = comb.core_stripchart.combined , width = 24, height = 20, units = "cm", dpi = 300) # width = 34, height = 22,
 ggsave(file.path(out_dir, "FigS7_Hym_Lep_core_stripchart.pdf"), plot = comb.core_stripchart.combined , width = 24, height = 20, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS8_country_core.png"), plot = core_stripchart.country.stats, width = 24, height = 15, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS8_country_core.pdf"), plot = core_stripchart.country.stats, width = 24, height = 15, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS8_country_core.png"), plot = core_stripchart.country.stats, width = 24, height = 12, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS8_country_core.pdf"), plot = core_stripchart.country.stats, width = 24, height = 12, units = "cm", dpi = 300)
 
-ggsave(file.path(out_dir, "FigS9_bubble.country.png"), plot = ASV.bubble.core.country , width = 24, height = 28, units = "cm", dpi = 300)
-ggsave(file.path(out_dir, "FigS9_bubble.country.pdf"), plot = ASV.bubble.core.country , width = 24, height = 28, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS9_bubble.country.png"), plot = ASV.bubble.core.country , width = 24, height = 25, units = "cm", dpi = 300)
+ggsave(file.path(out_dir, "FigS9_bubble.country.pdf"), plot = ASV.bubble.core.country , width = 24, height = 25, units = "cm", dpi = 300)
 
 ggsave(file.path(out_dir, "FigS10_endo.png"), plot = s10.endosymbiont.arrange , width = 24, height = 12, units = "cm", dpi = 300)
 ggsave(file.path(out_dir, "FigS10_endo.pdf"), plot = s10.endosymbiont.arrange , width = 24, height = 12, units = "cm", dpi = 300)
@@ -6648,4 +5728,5 @@ pipeline_end <- Sys.time()
 runtime <- difftime(pipeline_end, pipeline_start, units = "mins")
 
 message("Pipeline finished at ", pipeline_end)
-message("Total runtime: ", round(as.numeric(runtime), 2), " minutes")
+cat("Total Runtime:", round(as.numeric(runtime), 2), "minutes")
+

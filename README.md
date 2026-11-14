@@ -4,7 +4,8 @@ by Arne Weinhold (LMU Munich) arne.weinhold@bio.lmu.de
 
 ## What it is
 This repository provides the full processing pipeline for microbiome analysis based on 16S Illumina sequencing data. It contains all code required to reproduce the analyses, figures and statistics presented in:
-> Weinhold A*, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: Host-specific and common core microbiota in adult butterflies across continents, bioRxiv https://doi.org/10.64898/2026.02.27.708436
+> Weinhold A*, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: **Host-structured adult butterfly microbiomes share a common core across continents**
+, bioRxiv https://doi.org/10.64898/2026.02.27.708436
 
 ## How to
 * Download all files of this repository
@@ -16,13 +17,15 @@ This repository provides the full processing pipeline for microbiome analysis ba
 * Loads additional functions ```R_16S_AW_functions.R```
 * Imports sample data into ps object ```data.comp```
 * Creates output directory for *.pdf files
+* Run time approx 15 min on a desktop Computer
 
 ## Output files
 ```
 00_data pre-processing and filtering
 01_sample taxa composition and core analysis
-02_sample_div alpha and beta diversity analysis
-03_sample_taxa ASV abundance
+02_sample_div alpha diversity analysis
+03_sample_div beta diversity analysis
+04_sample_taxa ASV abundance, endosymbionts
 05_ggtree core tree analysis
 06_alluvial network alluvial plot
 07_Hym_Lep bee data import
@@ -30,5 +33,5 @@ This repository provides the full processing pipeline for microbiome analysis ba
 ```
 
 ## Supplementary Information
-* Run ```Supplementary_information.tex``` in Latex to create the supplementary information as pdf file
+* Run ```Supplementary_information.tex``` in LaTeX to create the ```Supplementary_information.pdf``` file.
 
