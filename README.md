@@ -35,3 +35,13 @@ This repository provides the full processing pipeline for microbiome analysis ba
 ## Supplementary Information
 * Run ```Supplementary_information.tex``` in LaTeX to create the ```Supplementary_information.pdf``` file.
 
+##  Data and code availability
+
+The original processed data and metadata under ```data``` are licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) license.
+
+When using these data, please cite the associated research article:
+
+> Weinhold A, Pinos A, Correa-Carmona Y, Holzmann K L, Alonso-Alonso P, Yon F, Steffan-Dewenter I, Peters M K, Brehm G, Keller A: **Host-structured adult butterfly microbiomes share a common core across continents**, accepted at Nature Communications 
+
+The R scripts and analytical pipeline are licensed under the MIT License.
+
